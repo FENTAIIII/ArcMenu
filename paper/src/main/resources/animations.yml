@@ -1,0 +1,84 @@
+schema-version: 1
+
+transitions:
+  m5-slide:
+    enter:
+      duration: 8
+      easing: ease-out
+      offset: {x: -36, y: 0, z: 0}
+      scale: {x: 0.90, y: 0.90}
+    exit:
+      duration: 6
+      easing: ease-in
+      offset: {x: 0, y: -28, z: 0}
+      scale: {x: 0.92, y: 0.92}
+    switch:
+      duration: 7
+      easing: ease-out
+      offset: {x: 36, y: 0, z: 0}
+      scale: {x: 0.94, y: 0.94}
+
+tracks:
+  model-spin:
+    target: spinner
+    property: rotation
+    duration: 60
+    easing: linear
+    loop: repeat
+    trigger: open
+    keyframes:
+      - {at: 0, value: {x: -15, y: 0, z: 0}}
+      - {at: 1, value: {x: -15, y: 360, z: 0}}
+
+  title-content:
+    target: animated-title
+    property: content
+    duration: 60
+    easing: linear
+    loop: repeat
+    trigger: open
+    keyframes:
+      - {at: 0, value: '&fArcMenu M5'}
+      - {at: 0.5, value: '&bText keyframes'}
+      - {at: 1, value: '&fArcMenu M5'}
+
+  title-opacity:
+    target: animated-title
+    property: opacity
+    duration: 24
+    easing: ease-in-out
+    loop: ping-pong
+    trigger: open
+    keyframes:
+      - {at: 0, value: 112}
+      - {at: 1, value: 255}
+
+  card-bob:
+    target: action-card
+    property: offset
+    duration: 8
+    easing: ease-in-out
+    loop: ping-pong
+    trigger: api
+    keyframes:
+      - {at: 0, value: {x: 0, y: -35, z: 1}}
+      - {at: 1, value: {x: 0, y: -25, z: 1}}
+
+  card-scale:
+    target: action-card
+    property: scale
+    duration: 8
+    easing: ease-out
+    loop: ping-pong
+    trigger: api
+    keyframes:
+      - {at: 0, value: {x: 1, y: 1}}
+      - {at: 1, value: {x: 1.10, y: 1.10}}
+
+menus:
+  m5-animation:
+    transition: m5-slide
+    tracks: [model-spin, title-content, title-opacity, card-bob, card-scale]
+  details:
+    transition: m5-slide
+    tracks: []

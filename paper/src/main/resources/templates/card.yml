@@ -1,0 +1,25 @@
+schema-version: 1
+id: card
+frontend:
+  card:
+    type: group
+    offset:
+      x: -65
+      y: -5
+      z: 1
+    rotation:
+      z: 15
+      x: 0
+      y: 0
+    children:
+      card-background:
+        type: rectangle
+        width: 110
+        height: 55
+        color: '#365E91'
+      card-label:
+        type: text
+        content: '&fRotated frontend'
+        offset:
+          z: 1
+        size: 8

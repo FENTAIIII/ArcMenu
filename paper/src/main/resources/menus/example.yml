@@ -1,0 +1,111 @@
+# M2 runtime actions execute only under /arcmenu open; administrator preview remains read-only.
+schema-version: 1
+id: example
+permission: arcmenu.use
+open-commands:
+  - arc
+main-menu: true
+canvas:
+  width: 320
+  height: 180
+  pixels-per-block: 42.7
+  distance: 3
+
+events:
+  open: 'sound: BLOCK_CHEST_OPEN-1-1'
+  close: 'sound: BLOCK_CHEST_CLOSE-1-1'
+
+frontend:
+  viewport-content:
+    type: group
+    scale: {x: 0.427, y: 0.427}
+    children:
+      background:
+        type: rectangle
+        width: 320
+        height: 180
+        color: '#182031'
+        opacity: 235
+      border:
+        type: frame
+        width: 318
+        height: 178
+        thickness: 1
+        offset: {z: 0.5}
+        color: '#617DA0'
+      title:
+        type: text
+        content: '&fArcMenu M2 - %player_name%'
+        offset: {y: 58, z: 1}
+        size: 12
+        update: 20
+      divider-line:
+        type: line
+        width: 118
+        thickness: 1
+        offset: {y: 43, z: 1}
+        color: '#617DA0'
+      card:
+        type: group
+        offset: {x: -65, y: -5, z: 1}
+        rotation: {z: 15, x: 0, y: 0}
+        children:
+          card-background:
+            type: rectangle
+            width: 110
+            height: 55
+            color: '#365E91'
+          card-label:
+            type: text
+            content: '&fRotated frontend'
+            offset: {z: 1}
+            size: 8
+
+      sword:
+        type: item
+        material: minecraft:diamond_sword
+        context: GUI
+        offset: {x: 72, y: 0, z: 2}
+        scale: {x: 40, y: 40}
+      block:
+        type: block
+        block-data: 'minecraft:grass_block[snowy=false]'
+        offset: {x: 120, y: 48, z: 2}
+        rotation: {x: -20, y: 35}
+        scale: {x: 30, y: 30}
+      hint:
+        type: text
+        content: '&7Backend regions never inherit the card transform.'
+        offset: {y: -64, z: 1}
+        size: 7
+
+backend:
+  card-area:
+    x: -27.755
+    y: -2.135
+    width: 46.97
+    height: 23.485
+    tooltip:
+      - '&fIndependent axis-aligned rectangle region.'
+      - '&7Player: %player_name%'
+    update: 20
+    actions:
+      all: 'sound: UI_BUTTON_CLICK-1-1'
+      right:
+        - condition: 'perm arcmenu.use'
+          actions:
+            - 'tell: &aRight-click reached card-area at %player_x%, %player_y%, %player_z%.'
+          deny:
+            - 'tell: &cPermission denied.'
+  model-area:
+    x: 30.744
+    y: 0
+    width: 21.35
+    height: 21.35
+    priority: 1
+    tooltip:
+      - 'Vanilla item and block displays'
+      - '&eRight-click to test open/back routing.'
+    actions:
+      right:
+        - 'open: details'

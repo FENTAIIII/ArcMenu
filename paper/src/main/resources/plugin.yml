@@ -1,0 +1,19 @@
+name: ArcMenu
+version: '${project.version}'
+main: com.fentai.arcmenu.paper.ArcMenuPlugin
+api-version: '1.21'
+description: ArcMenu display-menu runtime and server-authoritative Fabric editor bridge
+website: https://github.com/FENTAIIII/ArcMenu
+depend: [ProtocolLib]
+softdepend: [PlaceholderAPI, Vault, PlayerPoints, CraftEngine]
+commands:
+  arcmenu:
+    description: Open ArcMenu menus or manage administrator previews
+    usage: /arcmenu open|close|mode|edit|animate|animations|performance|list|templates|validate|reload|resources|preview|pointer|status
+permissions:
+  arcmenu.use:
+    description: Open and use ArcMenu runtime menus
+    default: true
+  arcmenu.admin:
+    description: Manage ArcMenu documents and administrator previews
+    default: op

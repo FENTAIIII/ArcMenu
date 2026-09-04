@@ -1,0 +1,22 @@
+# M6 input policy: player-choice, force-touch or force-mouse.
+# Legacy force-crosshair/force-cursor and crosshair/cursor values remain accepted.
+language:
+  # Console/log messages use this locale. Files live in plugins/ArcMenu/languages.
+  default: zh_CN
+  # Player-facing plugin messages follow the locale reported by that player's client.
+  follow-player-locale: true
+
+shortcuts:
+  # Shift+F toggles the unique main menu. False leaves offhand swapping untouched.
+  shift-f: true
+
+mouse:
+  policy: player-choice
+  default: touch
+  cursor:
+    sensitivity-x: 2.0
+    sensitivity-y: 2.0
+    clamp-margin: 3.0
+    # Cursor images are fixed to images/mouse/mouse.png and choose.png. Size is their logical height.
+    size: 5.0
+    z: 5.0

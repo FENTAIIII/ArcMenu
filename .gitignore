@@ -1,0 +1,9 @@
+# Maven build output
+**/target/
+**/dependency-reduced-pom.xml
+**/build/
+**/.gradle/
+
+# IntelliJ IDEA workspace files
+/.idea/
+*.iml

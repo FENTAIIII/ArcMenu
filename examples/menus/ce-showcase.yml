@@ -1,0 +1,193 @@
+schema-version: 1
+id: ce-showcase
+permission: arcmenu.use
+canvas:
+  width: 320
+  height: 180
+  pixels-per-block: 42.7
+  distance: 3
+frontend:
+  viewport-content:
+    type: group
+    scale: {x: 0.427, y: 0.427}
+    children:
+      background:
+        type: rectangle
+        width: 320
+        height: 198
+        color: '#000000'
+        opacity: 100
+        offset:
+          y: 8
+      border:
+        type: frame
+        width: 318
+        height: 178
+        thickness: 1
+        color: '#D5A642'
+        offset:
+          z: 0.5
+        opacity: 255
+      title:
+        type: text
+        content: '&6CraftEngine 真实物品展示'
+        size: 11
+        offset:
+          y: 68
+          z: 1
+      subtitle:
+        type: text
+        content: '&7CE ItemStack context 与图片'
+        size: 7
+        offset:
+          y: 52
+          z: 1
+      fixed-panel:
+        type: rectangle
+        width: 92
+        height: 92
+        color: '#000000'
+        opacity: 160
+        offset:
+          x: -105
+          y: -4
+          z: 2
+      ce-fixed-model:
+        type: item
+        material: default:topaz_sword
+        context: FIXED
+        offset:
+          x: -100
+          y: 5
+          z: 3
+        rotation:
+          y: 5
+        scale:
+          x: 50
+          y: 50
+      fixed-label:
+        type: text
+        content: '&fFIXED &8· &7物品模型'
+        size: 10
+        offset:
+          x: -105
+          y: -39
+          z: 3
+      gui-panel:
+        type: rectangle
+        width: 92
+        height: 92
+        color: '#000000'
+        opacity: 100
+        offset:
+          x: 0
+          y: -4
+          z: 2
+      ce-gui-icon:
+        type: item
+        material: default:topaz_sword
+        context: GUI
+        offset:
+          x: 0
+          y: 5
+          z: 3
+        scale:
+          x: 36
+          y: 36
+      gui-label:
+        type: text
+        content: '&fGUI &8· &7物品栏图标'
+        size: 10
+        offset:
+          x: 0
+          y: -39
+          z: 3
+      topaz-panel:
+        type: rectangle
+        width: 92
+        height: 92
+        color: '#000000'
+        opacity: 160
+        offset:
+          x: 105
+          y: -4
+          z: 2
+      topaz-background:
+        type: image
+        source: /example.png
+        width: 50
+        height: 50
+        offset:
+          x: 100
+          y: -10
+          z: 2
+      topaz-label:
+        type: text
+        content: '&fPNG &8· &7图片预览'
+        size: 10
+        offset:
+          x: 105
+          y: -39
+          z: 4
+      tooltip-note:
+        type: text
+        content: '&e这是一个示例，来展示本纯paper无模组菜单'
+        size: 6
+        line-width: 290
+        offset:
+          y: -72
+          z: 2
+      line:
+        type: line
+        width: 311.416
+        thickness: 1
+        color: '#FFFFFF'
+        offset:
+          y: 45.418
+          z: 1.917
+
+backend:
+  fixed-area:
+    x: -44.835
+    y: -1.708
+    width: 39.284
+    height: 39.284
+    tooltip:
+     - '&6CraftEngine 模型'
+     - '&fID: default:topaz_sword'
+     - '&7ItemDisplay context: FIXED'
+    actions:
+      right: 'tell: &aFIXED 正在展示该 CE 物品的固定展示模型。'
+  gui-area:
+    x: 0
+    y: -1.708
+    width: 39.284
+    height: 39.284
+    tooltip:
+     - '&6CraftEngine 物品栏外观'
+     - '&fID: default:topaz_sword'
+    actions:
+      right: 'tell: &aGUI 正在展示同一 CE 物品的物品栏变换。'
+  topaz-area:
+    x: 44.835
+    y: -1.708
+    width: 39.284
+    height: 39.284
+    tooltip:
+     - '&6动态 CE 黄玉 tooltip'
+     - '&fbackground + frame 九宫格合成'
+     - '&7文字变化时重新计算宽高，边角不拉伸。'
+    actions:
+      right: 'tell: &e这里显示的是 CE 黄玉 tooltip 精灵；不是原版容器悬浮层。'
+  close-area:
+    x: 0
+    y: -30.744
+    width: 123.83
+    height: 8.54
+    priority: 1
+    tooltip:
+     - '&7右键关闭'
+     - '&8当前动态皮肤由 toolserver '
+     - '&8的 tooltip.yml 启用。'
+    actions:
+      right: close

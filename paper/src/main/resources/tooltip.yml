@@ -1,0 +1,53 @@
+touch:
+  offset: {x: 32.025, y: -8.54, z: 3}
+  # 此角固定在“触控点 + offset”，可选四个角。
+  anchor: top-left
+  # false：tooltip 列表每一项固定为一行；true：按 line-width 自动换行。
+  wrap: false
+  size: 2.989
+  line-width: 180
+  background: '#D0101010'
+  skin:
+    background: /ce/topaz_background.png
+    frame: /ce/topaz_frame.png
+    border: 8
+    # padding/min-size/size-adjust 使用 tooltip 字体像素。
+    padding: {left: 8, right: 8, top: 8, bottom: 8}
+    min-size: {width: 24, height: 24}
+    size-adjust: {width: 0, height: 0}
+    # offset 与 text-offset 的 x/y 使用菜单逻辑单位，z 使用菜单深度单位。
+    offset: {x: 0, y: 0, z: -0.25}
+    scale: {x: 1.0, y: 1.0}
+    text-offset: {x: 0, y: 0, z: 0}
+    # 以下微调项使用 tooltip 字体像素，会随上面的 size 与 scale 缩放。
+    seam-overlap: {x: 0, y: 0}
+    glyph-offset: {x: 0, y: 0}
+    column-offset: {left: 0, center: 0, right: 0}
+    row-offset: {top: 0, center: 0, bottom: 0}
+
+mouse:
+  offset: {x: 6, y: 4.27, z: 5}
+  # 此角固定在“鼠标尖端 + offset”，可选四个角。
+  anchor: top-left
+  # false：tooltip 列表每一项固定为一行；true：按 line-width 自动换行。
+  wrap: false
+  size: 4.375
+  line-width: 180
+  background: '#D0101010'
+  skin:
+    background: /ce/topaz_background.png
+    frame: /ce/topaz_frame.png
+    border: 8
+    # padding/min-size/size-adjust 使用 tooltip 字体像素。
+    padding: {left: 8, right: 8, top: 8, bottom: 8}
+    min-size: {width: 24, height: 24}
+    size-adjust: {width: 0, height: 0}
+    # offset 与 text-offset 的 x/y 使用菜单逻辑单位，z 使用菜单深度单位。
+    offset: {x: 0, y: 0, z: -0.25}
+    scale: {x: 1.0, y: 1.0}
+    text-offset: {x: 0, y: 0, z: 0}
+    # 以下微调项使用 tooltip 字体像素，会随上面的 size 与 scale 缩放。
+    seam-overlap: {x: 0, y: 0}
+    glyph-offset: {x: 0, y: 0}
+    column-offset: {left: 0, center: 0, right: 0}
+    row-offset: {top: 0, center: 0, bottom: 0}

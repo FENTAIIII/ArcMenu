@@ -1,0 +1,75 @@
+schema-version: 1
+id: m5-animation
+permission: arcmenu.use
+canvas:
+  width: 320
+  height: 180
+  pixels-per-block: 42.7
+  distance: 3
+
+frontend:
+  viewport-content:
+    type: group
+    scale: {x: 0.427, y: 0.427}
+    children:
+      background:
+        type: rectangle
+        width: 240
+        height: 140
+        color: '#182031'
+        opacity: 255
+      animated-title:
+        type: text
+        content: '&fArcMenu M5'
+        size: 12
+        opacity: 255
+        offset: {x: 0, y: 52, z: 2}
+      spinner:
+        type: item
+        material: minecraft:diamond_sword
+        context: GUI
+        offset: {x: 0, y: 10, z: 3}
+        rotation: {x: -15, y: 0, z: 0}
+        scale: {x: 42, y: 42}
+      action-card:
+        type: group
+        offset: {x: 0, y: -35, z: 1}
+        children:
+          card-background:
+            type: rectangle
+            width: 132
+            height: 28
+            color: '#365E91'
+          card-label:
+            type: text
+            content: '&fRight-click: API tracks'
+            size: 8
+            offset: {z: 1}
+      route-label:
+        type: text
+        content: '&7Shift-right: public addon route  |  right edge: close'
+        size: 6
+        offset: {x: 0, y: -62, z: 2}
+
+backend:
+  animate-area:
+    x: 0
+    y: -14.945
+    width: 56.364
+    height: 11.956
+    tooltip:
+      - '&fStart card-bob and card-scale'
+      - '&7The backend rectangle stays screen-aligned.'
+    actions:
+      right:
+        - 'animate: card-bob'
+        - 'animate: card-scale'
+      shift-right: 'open: arcmenu:example-details'
+  close-area:
+    x: 46.116
+    y: 0
+    width: 10.248
+    height: 59.78
+    tooltip: '&cClose with exit transition'
+    actions:
+      right: close

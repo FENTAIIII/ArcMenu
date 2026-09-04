@@ -1,0 +1,26 @@
+schema-version: 1
+id: trmenu_m2
+frontend:
+  dynamic-name:
+    type: text
+    content: '&fHello, %player_name%!'
+    update: 20
+backend:
+  button:
+    x: 0
+    y: 0
+    width: 80
+    height: 30
+    tooltip: '&7Right-click'
+    update: 20
+    actions:
+      all: 'sound: UI_BUTTON_CLICK-1-1'
+      right:
+        - priority: 5
+          condition: 'perm arcmenu.use'
+          actions:
+            - 'tell: &aAccepted'
+          deny:
+            - 'tell: &cDenied'
+        - priority: 1
+          actions: 'refresh: dynamic-name'

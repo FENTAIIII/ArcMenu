@@ -1,0 +1,66 @@
+schema-version: 1
+id: details
+permission: arcmenu.use
+canvas:
+  width: 320
+  height: 180
+  pixels-per-block: 42.7
+  distance: 3
+
+events:
+  open:
+    - 'sound: BLOCK_CHEST_OPEN-1-1.2'
+  close:
+    - 'sound: BLOCK_CHEST_CLOSE-1-0.9'
+
+frontend:
+  viewport-content:
+    type: group
+    scale: {x: 0.427, y: 0.427}
+    children:
+      background:
+        type: rectangle
+        width: 320
+        height: 180
+        color: '#182031'
+        opacity: 235
+      border:
+        type: frame
+        width: 318
+        height: 178
+        thickness: 1
+        color: '#617DA0'
+      title:
+        type: text
+        content: '&fRoute details'
+        offset: {y: 48, z: 1}
+        size: 12
+      explanation:
+        type: text
+        content: '&7Right-click Back to return to example.'
+        offset: {y: 8, z: 1}
+        size: 8
+      back-button:
+        type: rectangle
+        width: 90
+        height: 30
+        offset: {y: -40, z: 1}
+        color: '#365E91'
+      back-label:
+        type: text
+        content: '&fBack'
+        offset: {y: -40, z: 2}
+        size: 9
+
+backend:
+  back-area:
+    x: 0
+    y: -17.08
+    width: 38.43
+    height: 12.81
+    tooltip:
+      - '&fBack'
+      - '&7Returns through the per-player route stack.'
+    actions:
+      all: 'sound: UI_BUTTON_CLICK-1-1'
+      right: back

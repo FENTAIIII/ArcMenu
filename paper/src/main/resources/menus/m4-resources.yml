@@ -1,0 +1,41 @@
+schema-version: 1
+id: m4-resources
+permission: arcmenu.use
+canvas:
+  width: 320
+  height: 180
+  pixels-per-block: 42.7
+  distance: 3
+
+frontend:
+  viewport-content:
+    type: group
+    scale: {x: 0.427, y: 0.427}
+    children:
+      background:
+        type: rectangle
+        width: 180
+        height: 100
+        color: '#182031'
+        opacity: 235
+      generated-image:
+        type: image
+        source: /example.png
+        width: 48
+        height: 48
+        offset: {x: 0, y: 12, z: 2}
+      label:
+        type: text
+        content: '&fArcMenu M4 / CraftEngine merge probe'
+        size: 7
+        offset: {x: 0, y: -30, z: 1}
+
+backend:
+  close-area:
+    x: 0
+    y: 0
+    width: 76.86
+    height: 42.7
+    tooltip: '&7Right-click to close'
+    actions:
+      right: 'close'
