@@ -25,15 +25,11 @@ It uses new features that mojang had added to minecraft since 1.19.2, and it cov
 
 Want to create some different menus and animations that make you server unique among other’s? Then it’s the right place for you :)
 
-> Login screens. Music players. Guild dashboards. Shops, quests, social apps and dungeon briefings. ArcMenu gives every system on a Paper server one visual language—and gives ordinary players the whole experience without a client mod.
-
-ArcMenu is an open-source, server-driven UI framework for Minecraft. It combines player-private display entities, a fixed screen plane, resource-pack graphics, animation timelines, tooltips and a public application API to create interfaces that feel like part of the server itself.
-
-The long-term idea is simple: a server should be able to grow an ecosystem of applications without every plugin inventing another disconnected inventory GUI. ArcMenu supplies the screen, input, navigation and lifecycle; integrations keep ownership of accounts, music, guilds, shops, quests and every other domain behind the interface.
+> ArcMenu is not only a menu plugin, but an open-source, server-driven UI framework for Minecraft. It combines player-private display entities, a fixed screen plane, resource-pack graphics, animation timelines, tooltips and a public application API to create interfaces that feel like part of the server itself.The long-term idea is simple: a server should be able to grow an ecosystem of applications without every plugin inventing another disconnected inventory GUI. ArcMenu supplies the screen, input, navigation and lifecycle; integrations keep ownership of accounts, music, guilds, shops, quests and every other domain behind the interface.
 
 > **Development preview:** the source is open for development and review. The configuration format, API and editor protocol may still change before the first stable release. Automated tests do not replace in-game visual and coordinate acceptance.
 
-## See what the canvas can become
+## See what the canvas can our menu become
 
 These concept interfaces show the kind of experience third-party plugins can build with ArcMenu. The login, music, dungeon and social systems pictured here are demonstrations of the API's potential; they are not bundled applications.
 
@@ -43,7 +39,7 @@ These concept interfaces show the kind of experience third-party plugins can bui
     <td width="50%"><img src="assets/login-app.png" alt="Account login concept"></td>
   </tr>
   <tr>
-    <td align="center"><strong>Music that lives inside the world</strong></td>
+    <td align="center"><strong>Music plugin</strong></td>
     <td align="center"><strong>Account flows with a server identity</strong></td>
   </tr>
   <tr>
@@ -65,7 +61,7 @@ The same foundation can host sign-in rewards, mail, auctions, skill trees, serve
 - **Stable screen navigation:** menus and third-party applications reuse the first screen plane, so changing a route does not move the interface with the player's view.
 - **Animation timelines:** menu enter, switch and exit transitions sit beside reusable node tracks for position, rotation, scale, text content and text opacity.
 - **Resource workflows:** PNG images, custom tooltip skins, vanilla items and blocks, plus CraftEngine item models and pack composition.
-- **Strict configuration:** menu definitions use one canonical YAML vocabulary, validation is explicit, and a failed reload leaves the last valid runtime state intact.
+- **Easy configuration:** If you've used classical menu plugins like trmenu or deluxemenus before, then you are probably able to use our plugin.
 - **Application sessions:** addons receive a per-player surface, pointer events, optional mouse-mode hotbar scrolling, navigation, scheduling, private entity ownership and deterministic cleanup.
 - **Internationalization:** the plugin and editor include English and Simplified Chinese, with additional server locale files supported.
 
@@ -105,7 +101,7 @@ actions:
     - 'open-app: myplugin:shop featured'
 ```
 
-See the [application API contract](docs/第三方应用API.md) and the [Java addon example](examples/java-addon/src/main/java/example/ExampleArcMenuAddon.java).
+See the [Java addon example](examples/java-addon/src/main/java/example/ExampleArcMenuAddon.java).
 
 ## Build from source
 
