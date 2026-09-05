@@ -1,5 +1,5 @@
 touch:
-  offset: {x: 32.025, y: -8.54, z: 3}
+  offset: {x: 6, y: 4.27, z: 5}
   # 此角固定在“触控点 + offset”，可选四个角。
   anchor: top-left
   # false：tooltip 列表每一项固定为一行；true：按 line-width 自动换行。
