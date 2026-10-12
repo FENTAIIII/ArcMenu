@@ -3,6 +3,7 @@ package com.fentai.arcmenu.paper.editor
 import com.fentai.arcmenu.core.config.TemplateLoadResult
 import com.fentai.arcmenu.core.config.VisualTemplate
 import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.UUID
@@ -13,12 +14,17 @@ internal object TemplateFileOperations {
     fun delete(directory: Path, template: VisualTemplate, reload: () -> TemplateLoadResult) {
         val root = directory.toAbsolutePath().normalize()
         val relative = Path.of(template.sourceName)
-        require(!relative.isAbsolute && relative.nameCount == 1 && yamlName.matches(relative.fileName.toString())) {
-            "模板源文件名无效: ${template.sourceName}"
+        require(!relative.isAbsolute && relative.none { it.toString() in setOf(".", "..") } && yamlName.matches(relative.fileName.toString())) {
+            "Invalid template source path: ${template.sourceName}"
         }
         val file = root.resolve(relative).normalize()
-        require(file.parent == root) { "模板路径越过 templates 目录" }
-        require(Files.isRegularFile(file)) { "模板源文件不存在: ${template.sourceName}" }
+        require(file.startsWith(root) && file != root) { "Template path escapes the templates directory" }
+        var ancestor = file
+        while (ancestor != root) {
+            require(!Files.isSymbolicLink(ancestor)) { "Template paths must not traverse symbolic links" }
+            ancestor = ancestor.parent
+        }
+        require(Files.isRegularFile(file, NOFOLLOW_LINKS)) { "Template source file does not exist: ${template.sourceName}" }
 
         val backup = file.resolveSibling(".${file.fileName}.${UUID.randomUUID()}.deleting")
         var moved = false
@@ -26,7 +32,7 @@ internal object TemplateFileOperations {
             move(file, backup)
             moved = true
             val loaded = reload()
-            require(loaded.applied) { "删除后模板目录校验失败: ${loaded.errors.joinToString("；")}" }
+            require(loaded.applied) { "Template directory validation failed after deletion: ${loaded.errors.joinToString("; ")}" }
             Files.delete(backup)
             moved = false
         } catch (error: Exception) {
@@ -36,7 +42,7 @@ internal object TemplateFileOperations {
                     reload()
                 } catch (restoreError: Exception) {
                     error.addSuppressed(restoreError)
-                    throw IllegalStateException("删除模板失败，且无法恢复 ${template.sourceName}", error)
+                    throw IllegalStateException("Template deletion failed and ${template.sourceName} could not be restored", error)
                 }
             }
             throw error

@@ -42,7 +42,7 @@ data class MenuTransition(
 
 sealed interface KeyframeValue
 data class VectorFrameValue(val value: Vec3) : KeyframeValue
-data class ScaleFrameValue(val x: Double, val y: Double) : KeyframeValue
+data class ScaleFrameValue(val x: Double, val y: Double, val z: Double? = null) : KeyframeValue
 data class ContentFrameValue(val value: String) : KeyframeValue
 data class OpacityFrameValue(val value: Int) : KeyframeValue
 

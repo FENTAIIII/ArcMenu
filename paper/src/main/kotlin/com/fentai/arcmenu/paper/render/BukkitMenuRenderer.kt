@@ -12,17 +12,19 @@ import com.fentai.arcmenu.paper.resource.ResourcePackService
 import com.fentai.arcmenu.paper.performance.PerformanceMetrics
 import net.kyori.adventure.key.Key
 import net.kyori.adventure.text.Component
+import net.kyori.adventure.text.format.TextColor
 import net.kyori.adventure.text.JoinConfiguration
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer
 import org.bukkit.Bukkit
 import org.bukkit.Color
 import org.bukkit.Location
-import org.bukkit.Material
 import org.bukkit.entity.BlockDisplay
 import org.bukkit.entity.Display
 import org.bukkit.entity.ItemDisplay
 import org.bukkit.entity.Player
 import org.bukkit.entity.TextDisplay
+import com.fentai.arcmenu.paper.platform.ArcScheduler
+import org.bukkit.inventory.meta.SkullMeta
 import org.bukkit.inventory.ItemStack
 import org.bukkit.plugin.Plugin
 import org.bukkit.util.Transformation
@@ -41,7 +43,8 @@ class BukkitMenuRenderer(
     private val performance: PerformanceMetrics,
 ) {
     private val compiler = SceneCompiler()
-    private data class ImageHandle(val display: TextDisplay, var primitive: Image)
+    private val itemFactory = MenuHeadItemFactory(plugin, craftEngine)
+    private data class ImageHandle(val display: TextDisplay, var primitive: Image, var frame: Int = -1)
     private data class TooltipSkinHandle(
         val asset: NineSliceAsset,
         val displays: Map<NineSlicePart, TextDisplay>,
@@ -58,9 +61,7 @@ class BukkitMenuRenderer(
                 is Image -> if ('%' !in primitive.node.source) requireNotNull(resources.resolve(primitive.node.source)) {
                     "${primitive.id}: images 中不存在 ${primitive.node.source}；新增图片后请使用 /arcmenu reload all"
                 }
-                is Item -> require(itemMaterial(primitive.node.material) != null || craftEngine.hasItem(primitive.node.material)) {
-                    "${primitive.id}: 原版及 CraftEngine 中均不存在物品 ${primitive.node.material}"
-                }
+                is Item -> itemFactory.validate(primitive.node.material)
                 is Block -> try { Bukkit.createBlockData(primitive.node.blockData) } catch (error: IllegalArgumentException) {
                     throw IllegalArgumentException("${primitive.id}: 无效方块状态 ${primitive.node.blockData}", error)
                 }
@@ -109,6 +110,7 @@ class BukkitMenuRenderer(
         private val sceneDisplays = mutableMapOf<String, Display>()
         private val images = mutableMapOf<String, ImageHandle>()
         private val imageValues = mutableMapOf<String, String>()
+        private var imageTicks = 0L
         private var tooltip: TextDisplay? = null
         private var tooltipStyle: TooltipStyle? = null
         private var tooltipSkin: TooltipSkinHandle? = null
@@ -170,14 +172,25 @@ class BukkitMenuRenderer(
                 }
                 is Item -> {
                     val display = spawn(ItemDisplay::class.java)
-                    val item = itemMaterial(primitive.node.material)?.let(::ItemStack)
-                        ?: craftEngine.buildItem(primitive.node.material, player)
-                        ?: throw IllegalArgumentException("${primitive.id}: 无法构建物品 ${primitive.node.material}")
-                    display.setItemStack(item)
+                    val built = itemFactory.build(resolve(primitive.node.material), player)
+                    display.setItemStack(built.item)
+                    sceneDisplays[primitive.id] = display
+                    built.profile?.let { future ->
+                        deliverMenuHeadProfile(future,
+                            schedule = { task -> ArcScheduler.execute(plugin, player, task) },
+                            current = { sceneDisplays[primitive.id] === display && display.isValid },
+                            apply = { profile ->
+                                val updated = built.item.clone()
+                                val meta = updated.itemMeta as SkullMeta
+                                meta.playerProfile = profile
+                                updated.itemMeta = meta
+                                display.setItemStack(updated)
+                                performance.metadataWrite()
+                            })
+                    }
                     display.itemDisplayTransform = ItemDisplay.ItemDisplayTransform.valueOf(primitive.node.context)
                     // Item/block models use logical units too: authors choose their scale explicitly.
                     matrix(display, primitive.transform)
-                    sceneDisplays[primitive.id] = display
                 }
                 is Block -> {
                     val display = spawn(BlockDisplay::class.java)
@@ -285,20 +298,20 @@ class BukkitMenuRenderer(
         }
 
         fun updateImage(id: String, source: String) {
-            if (imageValues[id] == source) {
-                performance.metadataSkip()
-                return
-            }
             val handle = images[id] ?: return
-            val asset = runCatching { resources.resolve(source) }.getOrNull() ?: return
+            if (imageValues[id] == source) return
+            val asset = resources.resolveMenuImage(source) ?: return
             configureImage(handle.display, handle.primitive, asset)
             imageValues[id] = source
+            handle.frame = -1
             performance.metadataWrite()
         }
 
         private fun configureImage(display: TextDisplay, primitive: Image, asset: ImageAsset) {
             val node = primitive.node
-            display.text(Component.text(asset.character).font(Key.key(asset.font)))
+            display.text(Component.text(asset.character).font(Key.key(asset.font)).let { glyph ->
+                node.color?.let { glyph.color(TextColor.color(it)) } ?: glyph
+            })
             display.backgroundColor = Color.fromARGB(0)
             display.isDefaultBackground = false
             display.textOpacity = node.opacity.toByte()
@@ -310,6 +323,22 @@ class BukkitMenuRenderer(
             // and makes an alpha-255 PNG look washed out against the menu.
             display.isSeeThrough = false
             matrix(display, imageMatrix(primitive, asset))
+        }
+
+        fun tickGifImages() {
+            imageTicks++
+            images.forEach { (id, handle) ->
+                if (!handle.primitive.node.animated) return@forEach
+                val source = imageValues[id] ?: return@forEach
+                val count = resources.gifFrameCount(source)
+                if (count <= 0) return@forEach
+                val frame = ((imageTicks * handle.primitive.node.speed) % count).toInt()
+                if (frame == handle.frame) return@forEach
+                val asset = resources.resolveGifFrame(source, frame.toDouble()) ?: return@forEach
+                configureImage(handle.display, handle.primitive, asset)
+                handle.frame = frame
+                performance.metadataWrite()
+            }
         }
 
         fun enableTooltip(style: TooltipStyle) {
@@ -677,8 +706,6 @@ class BukkitMenuRenderer(
             LegacyComponentSerializer.legacyAmpersand().deserialize(content).font(Key.key(font))
 
     }
-
-    private fun itemMaterial(value: String): Material? = Material.matchMaterial(value)?.takeIf { it.isItem && !it.isAir }
 
     companion object {
         private const val BLUE: Int = 0x663B82F6

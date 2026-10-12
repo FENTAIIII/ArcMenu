@@ -1,0 +1,45 @@
+schema-version: 1
+id: compatible
+permission: menus.example
+permission-denied-menu: unavailable
+main-menu: true
+open-commands: [compatible]
+canvas: {width: 320, height: 180, pixels-per-block: 100, distance: 3}
+frontend:
+  group:
+    type: group
+    offset: {x: 4, y: 7, z: 1}
+    rotation: {x: 2, y: 3, z: 4}
+    scale: {x: 1.2, y: 0.8}
+    children:
+      panel: {type: rectangle, width: 120, height: 60, color: '#123456', opacity: 200}
+      border: {type: frame, width: 120, height: 60, thickness: 2, color: '#FFFFFF'}
+      divider: {type: line, width: 80, thickness: 2, color: '#AABBCC'}
+      label: {type: text, content: 'Hello %player_name%', size: 12, font: 'minecraft:default', opacity: 200, alignment: left, line-width: 180, update: 20}
+      icon: {type: image, source: /icon.png, width: 24, height: 16, color: '#88AACC', opacity: 210, update: 10}
+      motion: {type: gif, source: /motion.gif, width: 32, height: 24, color: '#BBCCDD', opacity: 220, speed: 0.5}
+      model: {type: item, material: 'minecraft:diamond_sword', context: GUI, scale: {x: 32, y: 24, z: 12}}
+      stone: {type: block, block-data: 'minecraft:stone', scale: {x: 20, y: 18, z: 15}}
+backend:
+  button:
+    x: 0
+    y: 0
+    width: 80
+    height: 30
+    priority: 2
+    tooltip: ['Example tooltip']
+    update: 5
+    condition: 'perm menus.example'
+    deny: ['tell: Access denied']
+    on-hover: ['tell: Hover']
+    on-leave: ['tell: Leave']
+    actions:
+      left: ['tell: Left']
+      right: ['tell: Right']
+      middle: ['tell: Middle']
+      shift-left: ['tell: Shift left']
+      shift-right: ['tell: Shift right']
+      shift-middle: ['tell: Shift middle']
+events:
+  open: ['tell: Open']
+  close: ['tell: Close']

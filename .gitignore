@@ -7,3 +7,16 @@
 # IntelliJ IDEA workspace files
 /.idea/
 *.iml
+
+# Local development instructions and notes
+AGENTS.md
+PLAN.md
+/docs/
+__pycache__/
+*.py[cod]
+
+# Local authoring instructions and planning notes
+agents.md
+plan.md
+MCP.md
+.codex/

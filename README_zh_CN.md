@@ -9,7 +9,6 @@
 <p align="center">
   <a href="README.md">English</a> ·
   <a href="https://github.com/FENTAIIII/ArcMenu-Editor">可视化编辑器</a> ·
-  <a href="docs/第三方应用API.md">应用 API</a> ·
   <a href="LICENSE">MIT 许可证</a>
 </p>
 
@@ -113,7 +112,7 @@ cd ArcMenu
 mvn clean verify
 ```
 
-构建后的服务端插件位于 `paper/target/ArcMenu-0.1.0-SNAPSHOT.jar`。在 Paper 上安装时必须同时安装 ProtocolLib；PlaceholderAPI、Vault、PlayerPoints 与 CraftEngine 是可选接入，其中 CraftEngine 是当前支持的自定义内容插件。
+构建后的服务端插件位于 `paper/target/ArcMenu-3.0.0.jar`。在 Paper 上安装时必须同时安装 ProtocolLib；PlaceholderAPI、Vault、PlayerPoints 与 CraftEngine 是可选接入，其中 CraftEngine 是当前支持的自定义内容插件。
 
 目标版本范围为 **Paper / Minecraft Java 1.21.1–26.2**。自动编译与测试矩阵覆盖 1.21.1、1.21.4、1.21.6、1.21.11、26.1.2 和 26.2；各版本的真实运行画面仍需单独验收。当前编辑器面向 **Minecraft 26.1.2 Fabric**，需要 Java 25。
 
@@ -127,4 +126,8 @@ mvn clean verify
 | `protocol` | 与 ArcMenu Editor 共用的无依赖通信协议 |
 | `benchmarks` | 可重复执行的性能基线 |
 
-详细设计与验收记录位于 [`docs`](docs)。源码使用 [MIT 许可证](LICENSE)，第三方授权与致谢记录在 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+源码使用 [MIT 许可证](LICENSE)，第三方授权与致谢记录在 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+## 社区版 3.0.0
+
+社区版与付费版共用 ArcMenu Editor 3.0.0，支持一致的菜单 YML 结构、左/中/右键与 Shift 组合、悬停/离开事件、权限不足跳转、无着色器 GIF、项目管理器和 ArcPack 打包、发布、下载与安装。市场仅允许 OP 使用。社区版不支持 Effect 或着色器功能，包含 Effect 的 ArcPack 会被整包拒绝。

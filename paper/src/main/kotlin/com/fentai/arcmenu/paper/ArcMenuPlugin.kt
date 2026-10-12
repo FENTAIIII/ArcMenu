@@ -14,6 +14,8 @@ import com.fentai.arcmenu.paper.input.PointerController
 import com.fentai.arcmenu.paper.input.PointerMode
 import com.fentai.arcmenu.paper.input.PointerSettingsLoader
 import com.fentai.arcmenu.paper.input.displayName
+import com.fentai.arcmenu.paper.branding.StartupBanner
+import com.fentai.arcmenu.paper.localization.ArcMessages
 import com.fentai.arcmenu.paper.localization.LanguageManager
 import com.fentai.arcmenu.paper.performance.PerformanceMetrics
 import com.fentai.arcmenu.paper.editor.EditorService
@@ -44,6 +46,12 @@ import org.bukkit.event.block.Action
 import org.bukkit.inventory.EquipmentSlot
 import org.bukkit.plugin.java.JavaPlugin
 import org.bukkit.plugin.ServicePriority
+import com.fentai.arcmenu.core.model.MenuDocument
+import com.fentai.arcmenu.protocol.EditorProtocol
+import com.fentai.arcmenu.paper.util.decimal
+import com.fentai.arcmenu.paper.workspace.WorkspaceService
+import com.fentai.arcmenu.paper.workspace.MarketConfiguration
+import com.fentai.arcmenu.paper.workspace.canAccessMarket
 import java.nio.file.Files
 
 class ArcMenuPlugin : JavaPlugin(), Listener {
@@ -60,6 +68,7 @@ class ArcMenuPlugin : JavaPlugin(), Listener {
     private lateinit var api: ArcMenuApiImpl
     private lateinit var pointer: PointerController
     private lateinit var performance: PerformanceMetrics
+    private lateinit var workspace: WorkspaceService
     private lateinit var editor: EditorService
     private lateinit var language: LanguageManager
     private lateinit var menuCommands: MenuCommandRegistry
@@ -70,6 +79,7 @@ class ArcMenuPlugin : JavaPlugin(), Listener {
     private val animationFile get() = dataFolder.toPath().resolve("animations.yml")
 
     override fun onEnable() {
+        StartupBanner.show(this)
         saveDefaultConfig()
         shortcutSettings = MenuShortcutSettingsLoader.load(this)
         language = LanguageManager(this).also(LanguageManager::load)
@@ -91,7 +101,7 @@ class ArcMenuPlugin : JavaPlugin(), Listener {
         }
         val imageDirectory = dataFolder.toPath().resolve("images")
         Files.createDirectories(imageDirectory)
-        listOf("example.png", "mouse/mouse.png", "mouse/choose.png", "ce/topaz_background.png", "ce/topaz_frame.png").forEach { path ->
+        listOf("example.png", "example.gif", "mouse/mouse.png", "mouse/choose.png", "ce/topaz_background.png", "ce/topaz_frame.png").forEach { path ->
             if (!Files.exists(imageDirectory.resolve(path))) saveResource("images/$path", false)
         }
         val tooltipStyles = TooltipStyleLoader.load(this)
@@ -106,10 +116,11 @@ class ArcMenuPlugin : JavaPlugin(), Listener {
         renderer = BukkitMenuRenderer(this, resources, craftEngine, performance)
         state = RuntimeStateStore(this, language)
         val placeholders = PlaceholderResolver(this, state, language)
-        pointer = PointerController(this, PointerSettingsLoader.load(this), performance::entitySpawn)
+        pointer = PointerController(this, PointerSettingsLoader.load(this), performance::entitySpawn) { player, button, shift ->
+            if (::sessions.isInitialized) sessions.activate(player, button, shift)
+        }
         val result = catalog.reload(menuDirectory, renderer::validate, this::validateMenuSet)
         initialCatalogPending = !result.applied
-        result.errors.forEach { logger.severe(it) }
         val animationResult = if (result.applied) animationCatalog.reload(animationFile, catalog.documents) else null
         animationResult?.errors?.forEach { logger.severe(it) }
         val templates = templateCatalog.reload(templateDirectory)
@@ -128,11 +139,14 @@ class ArcMenuPlugin : JavaPlugin(), Listener {
             {
                 resources.sources().sorted().mapNotNull { source ->
                     resources.resolve(source)?.let { asset ->
-                        com.fentai.arcmenu.protocol.EditorProtocol.ImageSnapshot(source, asset.pixelWidth, asset.pixelHeight)
+                        EditorProtocol.ImageSnapshot(source, asset.pixelWidth, asset.pixelHeight)
                     }
                 }
             },
         )
+        workspace = WorkspaceService(this, editor, sessions, language, { catalog.documents },
+            this::refreshWorkspaceFiles, { MarketConfiguration.url(config) }, { MarketConfiguration.certificateSha256(config) },
+            { sender, key, arguments -> reply(sender, key, *arguments) }, resourcePending = { craftEngine.workspaceRefreshPending }, templates = { templateCatalog.templates })
         api = ArcMenuApiImpl(sessions, extensionRoutes, applicationRegistry, pointer)
         server.servicesManager.register(ArcMenuApi::class.java, api, this, ServicePriority.Normal)
         api.registerRoute(this, "arcmenu:example-details", ArcMenuRoute { player, arguments ->
@@ -142,13 +156,12 @@ class ArcMenuPlugin : JavaPlugin(), Listener {
         if (result.applied) {
             logger.info(language.log("log.enabled", result.count, animationResult?.tracks ?: 0,
                 resources.imageCount(), templates.count, pointer.settings.policy.displayName()))
-        } else {
-            logger.warning(language.log("log.catalog-pending"))
         }
     }
 
     override fun onDisable() {
         if (::menuCommands.isInitialized) menuCommands.close()
+        if (::workspace.isInitialized) workspace.close()
         if (::editor.isInitialized) editor.close()
         if (::api.isInitialized) api.unregisterRoutes(this)
         if (::api.isInitialized) api.unregisterApplications(this)
@@ -199,8 +212,24 @@ class ArcMenuPlugin : JavaPlugin(), Listener {
             replyText(player, "$selection$applied${language.text(player, "common.sentence-end")}")
             return true
         }
+        if (subcommand == "market" || subcommand == "marketplace") {
+            val player = sender as? Player ?: run { reply(sender, "command.edit.player-only"); return true }
+            try { workspace.show(player, "market") }
+            catch (error: Exception) { reply(sender, "workspace.failed", language.errorText(sender, error, "workspace.operation-failed")) }
+            return true
+        }
         if (!sender.hasPermission("arcmenu.admin")) { reply(sender, "command.no-admin"); return true }
         when (subcommand) {
+            "projects", "project" -> {
+                val player = sender as? Player ?: run { reply(sender, "command.edit.player-only"); return true }
+                try { workspace.show(player, "projects") }
+                catch (error: Exception) { reply(sender, "workspace.failed", language.errorText(sender, error, "workspace.operation-failed")) }
+            }
+            "download" -> {
+                if (args.size < 3 || !args[1].equals("pack", true)) reply(sender, "workspace.download-usage")
+                else try { workspace.download(sender, args[2], args.getOrNull(3).orEmpty()) }
+                catch (error: Exception) { reply(sender, "workspace.failed", language.errorText(sender, error, "workspace.operation-failed")) }
+            }
             "list" -> reply(sender, "command.list", catalog.documents.keys.joinToString().ifEmpty { language.text(sender, "common.none") })
             "templates" -> reply(sender, "command.templates", templateCatalog.templates.keys.joinToString().ifEmpty { language.text(sender, "common.none") })
             "animations" -> {
@@ -339,8 +368,8 @@ class ArcMenuPlugin : JavaPlugin(), Listener {
             "status" -> reply(sender, "command.status", catalog.documents.size,
                 animationCatalog.configuration.menus.values.sumOf { it.tracks.size }, resources.imageCount(),
                 templateCatalog.templates.size, sessions.size, sessions.runtimeSize, sessions.entityCount,
-                pointer.settings.policy.displayName(), com.fentai.arcmenu.protocol.EditorProtocol.VERSION)
-            else -> replyText(sender, "/arcmenu open <id> | close | mode <touch|mouse> | edit <id> | animate <id> | stop-animation <id> | animations | performance [reset] | list | templates | validate | reload [all] | resources | preview <id> [frontend|backend] | pointer | status")
+                pointer.settings.policy.displayName(), EditorProtocol.VERSION)
+            else -> replyText(sender, "/arcmenu projects | market | download pack <id> [version] | open <id> | close | mode <touch|mouse> | edit <id> | animate <id> | stop-animation <id> | animations | performance [reset] | list | templates | validate | reload [all] | resources | preview <id> [frontend|backend] | pointer | status")
         }
         return true
     }
@@ -351,8 +380,10 @@ class ArcMenuPlugin : JavaPlugin(), Listener {
                 if (sender.hasPermission("arcmenu.use")) add("open")
                 if (sender.hasPermission("arcmenu.use")) add("mode")
                 add("close")
-                if (sender.hasPermission("arcmenu.admin")) addAll(listOf("edit", "animations", "animate", "stop-animation", "performance", "list", "templates", "validate", "reload", "resources", "preview", "pointer", "status"))
+                if (canAccessMarket(sender)) add("market")
+                if (sender.hasPermission("arcmenu.admin")) addAll(listOf("projects", "download", "edit", "animations", "animate", "stop-animation", "performance", "list", "templates", "validate", "reload", "resources", "preview", "pointer", "status"))
             }
+            args.size == 2 && args[0].equals("download", true) && sender.hasPermission("arcmenu.admin") -> listOf("pack")
             args.size == 2 && args[0].equals("open", true) -> catalog.documents.values
                 .filter { it.definition.permission.isBlank() || sender.hasPermission(it.definition.permission) }
                 .map { it.definition.id } + extensionRoutes.ids()
@@ -389,9 +420,14 @@ class ArcMenuPlugin : JavaPlugin(), Listener {
     fun onInteract(event: PlayerInteractEvent) {
         if (!sessions.contains(event.player)) return
         if (event.hand != EquipmentSlot.HAND) return
-        if (event.action in setOf(Action.RIGHT_CLICK_AIR, Action.RIGHT_CLICK_BLOCK)) {
+        val button = when (event.action) {
+            Action.LEFT_CLICK_AIR, Action.LEFT_CLICK_BLOCK -> PointerButton.LEFT
+            Action.RIGHT_CLICK_AIR, Action.RIGHT_CLICK_BLOCK -> PointerButton.RIGHT
+            else -> return
+        }
+        if (event.action != Action.PHYSICAL) {
             event.isCancelled = true
-            sessions.activate(event.player, PointerButton.RIGHT)
+            sessions.activate(event.player, button)
         }
     }
 
@@ -426,6 +462,7 @@ class ArcMenuPlugin : JavaPlugin(), Listener {
     }
 
     @EventHandler fun onQuit(event: PlayerQuitEvent) {
+        if (::workspace.isInitialized) workspace.disconnect(event.player)
         if (::editor.isInitialized) editor.close(event.player)
         sessions.closeImmediately(event.player, true)
         if (::pointer.isInitialized) pointer.discard(event.player)
@@ -452,13 +489,10 @@ class ArcMenuPlugin : JavaPlugin(), Listener {
         replyText(sender, language.text(sender, key, *arguments))
 
     private fun replyText(sender: CommandSender, message: String) =
-        sender.sendMessage(Component.text("[ArcMenu] $message"))
+        ArcMessages.reply(sender, message)
 
     private fun modeName(sender: CommandSender, mode: PointerMode): String =
         language.text(sender, if (mode == PointerMode.MOUSE) "mode.mouse" else "mode.touch")
-
-    private fun decimal(value: Double, places: Int): String =
-        String.format(java.util.Locale.ROOT, "%.${places}f", value)
 
     private fun applyEditorCatalog(): LoadResult {
         val candidate = MenuCatalog()
@@ -473,7 +507,16 @@ class ArcMenuPlugin : JavaPlugin(), Listener {
         return menus
     }
 
-    private fun validateMenuSet(documents: Map<String, com.fentai.arcmenu.core.model.MenuDocument>) {
+    private fun refreshWorkspaceFiles() {
+        resources.rebuild(TooltipStyleLoader.load(this).nineSliceRequests())
+        val result = applyEditorCatalog()
+        require(result.applied) { result.errors.joinToString("; ") }
+        val templates = templateCatalog.reload(templateDirectory)
+        require(templates.applied) { templates.errors.joinToString("; ") }
+        craftEngine.requestWorkspaceRefresh()
+    }
+
+    private fun validateMenuSet(documents: Map<String, MenuDocument>) {
         MenuSetValidator.validate(documents)
         menuCommands.validate(documents)
     }
@@ -481,13 +524,8 @@ class ArcMenuPlugin : JavaPlugin(), Listener {
     private fun onCraftEngineReloadReady(firstReload: Boolean) {
         if (!initialCatalogPending || !::renderer.isInitialized) return
         val result = applyEditorCatalog()
-        if (!result.applied) {
-            result.errors.forEach { logger.severe(language.log("log.craftengine-retry-error", it)) }
-            return
-        }
+        if (!result.applied) return
         initialCatalogPending = false
-        logger.info(language.log("log.craftengine-ready",
-            language.log(if (firstReload) "log.first" else "log.again"), result.count,
-            animationCatalog.configuration.menus.values.sumOf { it.tracks.size }))
+
     }
 }

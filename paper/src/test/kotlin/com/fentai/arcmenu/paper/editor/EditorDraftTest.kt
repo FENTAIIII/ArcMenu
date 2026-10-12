@@ -59,6 +59,7 @@ class EditorDraftTest {
         return EditorDraft(
             UUID.randomUUID(), file, definition.id, source, definition,
             validate = {}, parseSaved = { parser.parse(it, file.fileName.toString()).definition },
+            backupFile = directory.resolve("backup.yml"),
         )
     }
 
@@ -170,7 +171,7 @@ class EditorDraftTest {
         Files.writeString(draft.file, source + "# external edit\n")
 
         val error = assertThrows(IllegalArgumentException::class.java) { draft.save(1) }
-        assertTrue(error.message.orEmpty().contains("外部修改"))
+        assertTrue(error.message.orEmpty().contains("modified externally"))
         assertTrue(Files.readString(draft.file).endsWith("# external edit\n"))
     }
 
@@ -199,7 +200,7 @@ class EditorDraftTest {
         draft.delete(7, EditorProtocol.TAB_BACKEND, region)
         draft.save(8)
         assertEquals(draft.definition, MenuParser().parse(Files.readString(draft.file)).definition)
-        assertEquals(source, Files.readString(draft.file.resolveSibling("editor-test.yml.arcmenu-backup")))
+        assertEquals(source, Files.readString(directory.resolve("backup.yml")))
     }
 
     @Test

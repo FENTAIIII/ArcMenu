@@ -1,8 +1,12 @@
 package com.fentai.arcmenu.paper.editor
 
+import com.fentai.arcmenu.paper.localization.localizedArgumentFailure
+import com.fentai.arcmenu.paper.localization.localizedRequire
+import com.fentai.arcmenu.paper.localization.localizedError
 import com.fentai.arcmenu.core.geometry.HitTester
 import com.fentai.arcmenu.core.geometry.Transforms
 import com.fentai.arcmenu.core.config.VisualTemplate
+import com.fentai.arcmenu.core.config.ModelScaleDefaults
 import com.fentai.arcmenu.core.model.*
 import com.fentai.arcmenu.protocol.EditorProtocol
 import org.joml.Matrix3d
@@ -37,6 +41,7 @@ internal class EditorDraft(
     definition: MenuDefinition,
     private val validate: (MenuDefinition) -> Unit,
     private val parseSaved: (String) -> MenuDefinition,
+    private val backupFile: Path,
 ) {
     private data class DraftState(val source: String, val definition: MenuDefinition)
     private val undo = ArrayDeque<DraftState>()
@@ -53,10 +58,11 @@ internal class EditorDraft(
     var activeTab: Byte = EditorProtocol.TAB_FRONTEND
 
     val definition: MenuDefinition get() = currentState.definition
+    internal val source: String get() = currentState.source
     val dirty: Boolean get() = currentState.source != persistedState.source
 
     fun switchTab(tab: Byte) {
-        require(tab == EditorProtocol.TAB_FRONTEND || tab == EditorProtocol.TAB_BACKEND) { "未知编辑器 Tab" }
+        localizedRequire(tab == EditorProtocol.TAB_FRONTEND || tab == EditorProtocol.TAB_BACKEND, "editor.tab-invalid", "Unknown editor tab")
         activeGestureKey = null
         activeTab = tab
     }
@@ -71,18 +77,18 @@ internal class EditorDraft(
         finalUpdate: Boolean = true,
     ): NodeGeometry {
         requireRevision(expectedRevision)
-        require(gestureId >= 0 && (gestureId != 0L || finalUpdate)) { "拖动手势编号无效" }
+        localizedRequire(gestureId >= 0 && (gestureId != 0L || finalUpdate), "editor.drag-gesture-invalid", "Invalid drag gesture ID")
         val before = definition
         validatePoint(before.canvas, x, y)
         val next = when (tab) {
             EditorProtocol.TAB_FRONTEND -> before.copy(frontend = moveFrontend(before.frontend, id, x, y))
             EditorProtocol.TAB_BACKEND -> before.copy(backend = before.backend.map { region ->
                 if (region.id == id) region.copy(x = x, y = y) else region
-            }.also { require(it.any { region -> region.id == id }) { "后端区域不存在: $id" } })
-            else -> throw IllegalArgumentException("未知编辑器 Tab")
+            }.also { localizedRequire(it.any { region -> region.id == id }, "editor.region-missing", "Backend region does not exist: $id", id) })
+            else -> throw localizedArgumentFailure("editor.tab-invalid", "Unknown editor tab")
         }
         val nextSource = if (tab == EditorProtocol.TAB_FRONTEND) {
-            val node = findVisual(next.frontend, id) ?: error("前端元素不存在: $id")
+            val node = findVisual(next.frontend, id) ?: localizedError("editor.element-missing", "Frontend element does not exist: $id", id)
             val offset = node.properties.transform.offset
             YamlScalarPatcher.frontendOffset(currentState.source, id, offset.x, offset.y)
         } else {
@@ -90,7 +96,7 @@ internal class EditorDraft(
         }
         val gestureKey = gestureId.takeIf { it != 0L }?.let { "move:$tab:$id:$it" }
         if (nextSource == currentState.source) {
-            require(finalUpdate && gestureKey != null && activeGestureKey == gestureKey) { "操作没有产生变化" }
+            localizedRequire(finalUpdate && gestureKey != null && activeGestureKey == gestureKey, "editor.no-changes", "Operation made no changes")
             activeGestureKey = null
             return geometry(id, tab)
         }
@@ -109,21 +115,21 @@ internal class EditorDraft(
         finalUpdate: Boolean = true,
     ): NodeGeometry {
         requireRevision(expectedRevision)
-        require(gestureId >= 0 && (gestureId != 0L || finalUpdate)) { "缩放手势编号无效" }
+        localizedRequire(gestureId >= 0 && (gestureId != 0L || finalUpdate), "editor.resize-gesture-invalid", "Invalid resize gesture ID")
         val before = definition
         val current = geometry(id, tab)
         val width = max(1.0, abs(pointerX - current.x) * 2.0)
         val height = max(1.0, abs(pointerY - current.y) * 2.0)
-        require(width <= before.canvas.width * 4 && height <= before.canvas.height * 4) { "元素尺寸超出允许范围" }
+        localizedRequire(width <= before.canvas.width * 4 && height <= before.canvas.height * 4, "editor.dimensions-invalid", "Element dimensions exceed the allowed range")
         val next = when (tab) {
             EditorProtocol.TAB_FRONTEND -> before.copy(frontend = resizeFrontend(before.frontend, id, width, height))
             EditorProtocol.TAB_BACKEND -> before.copy(backend = before.backend.map {
                 if (it.id == id) it.copy(width = width, height = height) else it
-            }.also { require(it.any { region -> region.id == id }) { "后端区域不存在: $id" } })
-            else -> throw IllegalArgumentException("未知编辑器 Tab")
+            }.also { localizedRequire(it.any { region -> region.id == id }, "editor.region-missing", "Backend region does not exist: $id", id) })
+            else -> throw localizedArgumentFailure("editor.tab-invalid", "Unknown editor tab")
         }
         val nextSource = if (tab == EditorProtocol.TAB_FRONTEND) {
-            val target = findVisual(next.frontend, id) ?: error("前端元素不存在: $id")
+            val target = findVisual(next.frontend, id) ?: localizedError("editor.element-missing", "Frontend element does not exist: $id", id)
             YamlScalarPatcher.frontendScale(currentState.source, id,
                 target.properties.transform.scaleX, target.properties.transform.scaleY)
         } else {
@@ -131,7 +137,7 @@ internal class EditorDraft(
         }
         val gestureKey = gestureId.takeIf { it != 0L }?.let { "resize:$tab:$id:$it" }
         if (nextSource == currentState.source) {
-            require(finalUpdate && gestureKey != null && activeGestureKey == gestureKey) { "操作没有产生变化" }
+            localizedRequire(finalUpdate && gestureKey != null && activeGestureKey == gestureKey, "editor.no-changes", "Operation made no changes")
             activeGestureKey = null
             return geometry(id, tab)
         }
@@ -163,10 +169,14 @@ internal class EditorDraft(
         ids: List<String>,
         targetParentId: String,
         preserveParents: Boolean,
+        beforeCopy: ((Map<String, String>) -> Unit)? = null,
+        copied: ((Map<String, String>) -> Unit)? = null,
     ): List<String> {
         requireRevision(expectedRevision)
         val result = YamlDocumentEditor.duplicate(currentState.source, tab, ids, targetParentId, preserveParents)
+        beforeCopy?.invoke(result.copies)
         commitSource(result.source)
+        copied?.invoke(result.copies)
         return result.ids
     }
 
@@ -197,11 +207,11 @@ internal class EditorDraft(
         finalUpdate: Boolean = true,
     ) {
         requireRevision(expectedRevision)
-        require(gestureId >= 0 && (gestureId != 0L || finalUpdate)) { "属性拖动手势编号无效" }
+        localizedRequire(gestureId >= 0 && (gestureId != 0L || finalUpdate), "editor.property-gesture-invalid", "Invalid property drag gesture ID")
         val nextSource = YamlDocumentEditor.setProperty(currentState.source, tab, id, key, value)
         val gestureKey = gestureId.takeIf { it != 0L }?.let { "property:$tab:$id:$key:$it" }
         if (nextSource == currentState.source) {
-            require(finalUpdate && gestureKey != null && activeGestureKey == gestureKey) { "操作没有产生变化" }
+            localizedRequire(finalUpdate && gestureKey != null && activeGestureKey == gestureKey, "editor.no-changes", "Operation made no changes")
             activeGestureKey = null
             return
         }
@@ -224,7 +234,7 @@ internal class EditorDraft(
     fun undo(expectedRevision: Long) {
         requireRevision(expectedRevision)
         activeGestureKey = null
-        val previous = undo.pollLast() ?: throw IllegalArgumentException("没有可撤销的操作")
+        val previous = undo.pollLast() ?: throw localizedArgumentFailure("editor.undo-empty", "No operations to undo")
         redo.addLast(currentState)
         currentState = previous
         revision++
@@ -234,7 +244,7 @@ internal class EditorDraft(
     fun redo(expectedRevision: Long) {
         requireRevision(expectedRevision)
         activeGestureKey = null
-        val next = redo.pollLast() ?: throw IllegalArgumentException("没有可重做的操作")
+        val next = redo.pollLast() ?: throw localizedArgumentFailure("editor.redo-empty", "No operations to redo")
         undo.addLast(currentState)
         currentState = next
         revision++
@@ -245,17 +255,17 @@ internal class EditorDraft(
         requireRevision(expectedRevision)
         activeGestureKey = null
         val disk = Files.readString(file)
-        require(disk == persistedFingerprint) { "菜单文件已被外部修改；请关闭编辑器后重新打开，当前草稿未覆盖磁盘" }
+        localizedRequire(disk == persistedFingerprint, "editor.disk-changed", "Menu file was modified externally; close and reopen the editor. The current draft has not overwritten the file")
         if (!dirty) {
             saved = true
             return EditorSaveResult(false)
         }
         val nextSource = currentState.source
         val reparsed = parseSaved(nextSource)
-        require(reparsed == definition) { "保存后的 YAML 语义与草稿不一致，已拒绝写盘" }
-        val backup = file.resolveSibling("${file.fileName}.arcmenu-backup")
-        if (!Files.exists(backup)) {
-            Files.writeString(backup, persistedFingerprint)
+        localizedRequire(reparsed == definition, "editor.saved-semantics-invalid", "Saved YAML semantics do not match the draft; writing to disk was rejected")
+        if (!Files.exists(backupFile)) {
+            Files.createDirectories(backupFile.parent)
+            Files.writeString(backupFile, persistedFingerprint)
         }
         val temp = file.resolveSibling(".${file.fileName}.arcmenu-${UUID.randomUUID()}.tmp")
         Files.writeString(temp, nextSource)
@@ -272,34 +282,47 @@ internal class EditorDraft(
         persistedState = DraftState(nextSource, reparsed)
         currentState = persistedState
         saved = true
-        return EditorSaveResult(true, file.fileName.toString(), backup.fileName.toString())
+        return EditorSaveResult(true, file.fileName.toString(), backupFile.toString())
+    }
+
+    internal fun checkDiskUnchanged() {
+        localizedRequire(Files.readString(file) == persistedFingerprint, "editor.scene-changed", "Scene file changed externally; reopen the editor")
     }
 
     fun snapshot(
         serverVersion: String,
         images: List<EditorProtocol.ImageSnapshot> = emptyList(),
         templates: List<EditorProtocol.TemplateSnapshot> = emptyList(),
+        preview: MenuDefinition = definition,
+        schema: EditorProtocol.SnapshotPacket? = null,
     ): EditorProtocol.SnapshotPacket {
-        val propertyIndex = YamlDocumentEditor.propertyIndex(currentState.source)
-        val typeIndex = YamlDocumentEditor.typeIndex(currentState.source)
+        val schemaIndex = schema?.frontend()?.associateBy { it.id() }
+        val propertyIndex = if (schema == null) YamlDocumentEditor.propertyIndex(currentState.source) else emptyMap()
+        val typeIndex = if (schema == null) YamlDocumentEditor.typeIndex(currentState.source) else emptyMap()
         val frontend = mutableListOf<EditorProtocol.NodeSnapshot>()
         fun visit(nodes: List<VisualNode>, parentId: String, parent: Matrix4dc) {
             nodes.forEach { node ->
                 val matrix = Matrix4d(parent).mul(Transforms.local(node.properties.transform))
                 val (intrinsicWidth, intrinsicHeight) = intrinsic(node)
                 val bounds = bounds(matrix, intrinsicWidth, intrinsicHeight)
+                val values = emptyMap<String, String>()
+                val prior = schemaIndex?.get(node.properties.id)
                 frontend += EditorProtocol.NodeSnapshot(
                     node.properties.id, parentId,
-                    if (node is RectangleNode && typeIndex[node.properties.id] == "line") EditorProtocol.KIND_LINE else kind(node),
+                    prior?.kind() ?: if (node is RectangleNode && typeIndex[node.properties.id] == "line") EditorProtocol.KIND_LINE else kind(node),
                     bounds.x, bounds.y, bounds.width, bounds.height,
                     Math.toDegrees(atan2(matrix.m01(), matrix.m00())), node.properties.visible, false,
-                    propertyIndex[node.properties.id].orEmpty(),
+                    (prior?.properties() ?: propertyIndex[node.properties.id].orEmpty()).map { property ->
+                        values[property.key()]?.let {
+                            EditorProtocol.PropertySnapshot(property.key(), property.type(), it, property.choices())
+                        } ?: property
+                    },
                 )
                 if (node is GroupNode) visit(node.children, node.properties.id, matrix)
             }
         }
-        visit(definition.frontend, "", Matrix4d())
-        val backend = definition.backend.map { region ->
+        visit(preview.frontend, "", Matrix4d())
+        val backend = schema?.backend() ?: definition.backend.map { region ->
             EditorProtocol.NodeSnapshot(region.id, "", EditorProtocol.KIND_REGION, region.x, region.y,
                 region.width, region.height, 0.0, true, false,
                 propertyIndex[region.id].orEmpty())
@@ -313,10 +336,10 @@ internal class EditorDraft(
     fun geometry(id: String, tab: Byte): NodeGeometry {
         if (tab == EditorProtocol.TAB_BACKEND) return definition.backend.firstOrNull { it.id == id }
             ?.let { NodeGeometry(it.id, it.x, it.y, it.width, it.height) }
-            ?: throw IllegalArgumentException("后端区域不存在: $id")
+            ?: throw localizedArgumentFailure("editor.region-missing", "Backend region does not exist: $id", id)
         return snapshot("").frontend().firstOrNull { it.id() == id }
             ?.let { NodeGeometry(it.id(), it.x(), it.y(), it.width(), it.height()) }
-            ?: throw IllegalArgumentException("前端元素不存在: $id")
+            ?: throw localizedArgumentFailure("editor.element-missing", "Frontend element does not exist: $id", id)
     }
 
     fun hit(point: MenuPoint): String = HitTester(definition.backend).hit(point)?.id.orEmpty()
@@ -326,28 +349,29 @@ internal class EditorDraft(
         expectedDefinition: MenuDefinition? = null,
         gestureKey: String? = null,
     ) {
-        require(nextSource != currentState.source) { "操作没有产生变化" }
-        val nextDefinition = parseSaved(nextSource)
-        if (expectedDefinition != null) require(nextDefinition == expectedDefinition) { "YAML 修改结果与编辑事务不一致" }
+        val completed = ModelScaleDefaults.complete(nextSource)
+        localizedRequire(completed != currentState.source, "editor.no-changes", "Operation made no changes")
+        val nextDefinition = parseSaved(completed)
+        if (expectedDefinition != null) localizedRequire(nextDefinition == expectedDefinition, "editor.transaction-invalid", "YAML changes do not match the editor transaction")
         validate(nextDefinition)
         if (gestureKey == null || gestureKey != activeGestureKey) {
             undo.addLast(currentState)
             while (undo.size > 100) undo.removeFirst()
             redo.clear()
         }
-        currentState = DraftState(nextSource, nextDefinition)
+        currentState = DraftState(completed, nextDefinition)
         activeGestureKey = gestureKey
         revision++
         saved = !dirty
     }
 
     private fun requireRevision(expected: Long) {
-        require(expected == revision) { "修订冲突：客户端=$expected，服务端=$revision；已发送权威快照" }
+        localizedRequire(expected == revision, "editor.draft-revision-conflict", "Revision conflict: client=$expected, server=$revision; an authoritative snapshot was sent", expected, revision)
     }
 
     private fun validatePoint(canvas: Canvas, x: Double, y: Double) {
-        require(x.isFinite() && y.isFinite()) { "坐标必须为有限数值" }
-        require(abs(x) <= canvas.width * 2 && abs(y) <= canvas.height * 2) { "坐标超出编辑安全范围" }
+        localizedRequire(x.isFinite() && y.isFinite(), "editor.coordinates-invalid", "Coordinates must be finite numbers")
+        localizedRequire(abs(x) <= canvas.width * 2 && abs(y) <= canvas.height * 2, "editor.coordinates-outside", "Coordinates exceed the safe editing range")
     }
 
     private fun findVisual(nodes: List<VisualNode>, id: String): VisualNode? {
@@ -369,7 +393,7 @@ internal class EditorDraft(
                 val rx = targetX - parent.m20() * z - parent.m30()
                 val ry = targetY - parent.m21() * z - parent.m31()
                 val determinant = a * d - b * c
-                require(abs(determinant) > 1e-9) { "父组变换不可逆，无法拖动此元素" }
+                localizedRequire(abs(determinant) > 1e-9, "editor.parent-transform-invalid", "Parent group transform is not invertible; cannot drag this element")
                 val localX = (rx * d - b * ry) / determinant
                 val localY = (a * ry - rx * c) / determinant
                 node.withProperties(node.properties.copy(transform = old.copy(offset = old.offset.copy(x = localX, y = localY))))
@@ -379,7 +403,7 @@ internal class EditorDraft(
             } else node
         }
         val result = visit(nodes, Matrix4d())
-        require(found) { "前端元素不存在: $id" }
+        localizedRequire(found, "editor.element-missing", "Frontend element does not exist: $id", id)
         return result
     }
 
@@ -408,7 +432,7 @@ internal class EditorDraft(
             } else node
         }
         val result = visit(nodes, Matrix4d())
-        require(found) { "前端元素不存在: $id" }
+        localizedRequire(found, "editor.element-missing", "Frontend element does not exist: $id", id)
         return result
     }
 
@@ -481,7 +505,7 @@ internal class EditorDraft(
         is RectangleNode -> EditorProtocol.KIND_RECTANGLE
         is FrameNode -> EditorProtocol.KIND_FRAME
         is TextNode -> EditorProtocol.KIND_TEXT
-        is ImageNode -> EditorProtocol.KIND_IMAGE
+        is ImageNode -> if (node.animated) EditorProtocol.KIND_GIF else EditorProtocol.KIND_IMAGE
         is ItemNode -> EditorProtocol.KIND_ITEM
         is BlockNode -> EditorProtocol.KIND_BLOCK
     }
@@ -497,7 +521,7 @@ internal data class EditorSaveResult(val changed: Boolean, val fileName: String 
  */
 internal object YamlDocumentEditor {
     data class EditResult(val source: String, val id: String)
-    data class MultiEditResult(val source: String, val ids: List<String>)
+    data class MultiEditResult(val source: String, val ids: List<String>, val copies: Map<String, String>)
     private data class Ref(val container: MutableMap<String, Any?>, val id: String, val node: MutableMap<String, Any?>)
 
     private val loaderOptions = LoaderOptions().apply { isAllowDuplicateKeys = false }
@@ -519,25 +543,26 @@ internal object YamlDocumentEditor {
             EditorProtocol.KIND_FRAME -> "border"
             EditorProtocol.KIND_TEXT -> "text"
             EditorProtocol.KIND_IMAGE -> "image"
+            EditorProtocol.KIND_GIF -> "gif"
             EditorProtocol.KIND_ITEM -> "item"
             EditorProtocol.KIND_BLOCK -> "block"
             EditorProtocol.KIND_REGION -> "region"
-            else -> throw IllegalArgumentException("未知元素类型: $kind")
+            else -> throw localizedArgumentFailure("editor.element-type-invalid", "Unknown element type: $kind", kind)
         }
         val id = unique(base, ids)
         if (tab == EditorProtocol.TAB_BACKEND) {
-            require(kind == EditorProtocol.KIND_REGION) { "后端编辑器只能创建点击区域" }
-            require(parentId.isBlank()) { "点击区域不可被分组" }
-            backend(root)[id] = linkedMapOf("x" to 0, "y" to 0, "width" to 80, "height" to 30)
+            localizedRequire(kind == EditorProtocol.KIND_REGION, "editor.backend-region-only", "Backend editor can only create click regions")
+            localizedRequire(parentId.isBlank(), "editor.region-no-group", "Click regions cannot be grouped")
+            backend(root)[id] = initialNode(kind, initialSource)
         } else {
-            require(tab == EditorProtocol.TAB_FRONTEND) { "未知编辑器 Tab" }
-            require(kind != EditorProtocol.KIND_REGION) { "前端编辑器不能创建点击区域" }
+            localizedRequire(tab == EditorProtocol.TAB_FRONTEND, "editor.tab-invalid", "Unknown editor tab")
+            localizedRequire(kind != EditorProtocol.KIND_REGION, "editor.frontend-no-region", "Frontend editor cannot create click regions")
             val target = if (parentId.isBlank()) frontend(root) else {
-                val parent = findFrontend(root, parentId) ?: throw IllegalArgumentException("父组不存在: $parentId")
-                require(parent.node["type"] == "group") { "只能把元素创建在组内" }
+                val parent = findFrontend(root, parentId) ?: throw localizedArgumentFailure("editor.parent-group-missing", "Parent group does not exist: $parentId", parentId)
+                localizedRequire(parent.node["type"] == "group", "editor.parent-group-required", "Elements can only be created inside a group")
                 map(parent.node, "children", true)
             }
-            target[id] = defaultNode(kind, initialSource)
+            target[id] = initialNode(kind, initialSource)
         }
         return EditResult(dump(root), id)
     }
@@ -545,7 +570,7 @@ internal object YamlDocumentEditor {
     fun delete(source: String, tab: Byte, id: String): String {
         val root = load(source)
         val ref = if (tab == EditorProtocol.TAB_FRONTEND) findFrontend(root, id) else findBackend(root, id)
-        requireNotNull(ref) { "元素不存在: $id" }
+        localizedRequire(ref != null, "editor.any-element-missing", "Element does not exist: $id", id)
         ref.container.remove(id)
         return dump(root)
     }
@@ -555,7 +580,7 @@ internal object YamlDocumentEditor {
         val root = load(source)
         val roots = selectionRoots(root, tab, ids)
         roots.forEach { id ->
-            val ref = find(root, tab, id) ?: throw IllegalArgumentException("元素不存在: $id")
+            val ref = find(root, tab, id) ?: throw localizedArgumentFailure("editor.any-element-missing", "Element does not exist: $id", id)
             ref.container.remove(id)
         }
         return dump(root)
@@ -574,29 +599,31 @@ internal object YamlDocumentEditor {
         val allIds = allIds(root).toMutableSet()
         val target = if (preserveParents) null else destination(root, tab, targetParentId)
         val created = mutableListOf<String>()
+        val copies = linkedMapOf<String, String>()
         roots.forEach { sourceId ->
-            val sourceRef = find(root, tab, sourceId) ?: throw IllegalArgumentException("元素不存在: $sourceId")
+            val sourceRef = find(root, tab, sourceId) ?: throw localizedArgumentFailure("editor.any-element-missing", "Element does not exist: $sourceId", sourceId)
             val nextId = unique(sourceId, allIds)
             allIds += nextId
+            copies[sourceId] = nextId
             @Suppress("UNCHECKED_CAST")
             val copied = deepCopy(sourceRef.node) as MutableMap<String, Any?>
-            if (tab == EditorProtocol.TAB_FRONTEND) renameTemplateChildren(copied, allIds)
+            if (tab == EditorProtocol.TAB_FRONTEND) renameTemplateChildren(copied, allIds, copies)
             val output = target ?: sourceRef.container
             if (preserveParents) insertAfter(output, sourceId, nextId, copied) else output[nextId] = copied
             created += nextId
         }
-        return MultiEditResult(dump(root), created)
+        return MultiEditResult(dump(root), created, copies.toMap())
     }
 
     fun group(source: String, selectedIds: List<String>): EditResult {
         requireSelection(selectedIds)
         val root = load(source)
         val roots = selectionRoots(root, EditorProtocol.TAB_FRONTEND, selectedIds)
-        val refs = roots.map { findFrontend(root, it) ?: throw IllegalArgumentException("前端元素不存在: $it") }
+        val refs = roots.map { findFrontend(root, it) ?: throw localizedArgumentFailure("editor.element-missing", "Frontend element does not exist: $it", it) }
         val container = refs.first().container
-        require(refs.all { it.container === container }) { "只能把同一层级的元素编为一组" }
+        localizedRequire(refs.all { it.container === container }, "editor.group-same-level", "Only elements at the same level can be grouped")
         val ordered = container.entries.filter { it.key in roots }
-        require(ordered.isNotEmpty()) { "没有可编组的元素" }
+        localizedRequire(ordered.isNotEmpty(), "editor.group-empty", "No elements to group")
         val groupId = unique("group", allIds(root))
         val children = linkedMapOf<String, Any?>().apply { ordered.forEach { put(it.key, it.value) } }
         val group = linkedMapOf<String, Any?>("type" to "group", "children" to children)
@@ -610,17 +637,56 @@ internal object YamlDocumentEditor {
         return EditResult(dump(root), groupId)
     }
 
+    /** Clipboard nodes come from the captured document, even after the originals were edited or cut. */
+    fun paste(source: String, clipboardSource: String, ids: List<String>): MultiEditResult {
+        requireSelection(ids)
+        val root = load(source)
+        val captured = load(clipboardSource)
+        val roots = selectionRoots(captured, EditorProtocol.TAB_FRONTEND, ids)
+        val parents = parentIndex(captured)
+        val available = allIds(root).toMutableSet()
+        val copies = linkedMapOf<String, String>()
+        val created = mutableListOf<String>()
+        roots.forEach { id ->
+            val original = findFrontend(captured, id) ?: localizedError("editor.clipboard-element-missing", "Clipboard element is missing: $id", id)
+            val parent = parents[id].orEmpty()
+            val destination = if (parent.isBlank()) frontend(root) else {
+                val existingParent = findFrontend(root, parent)
+                localizedRequire(existingParent != null && existingParent.node["type"] == "group", "editor.clipboard-parent-missing", "Clipboard parent no longer exists; copy and paste the containing group")
+                map(existingParent.node, "children", true)
+            }
+            val nextId = unique(id, available)
+            available += nextId; copies[id] = nextId
+            @Suppress("UNCHECKED_CAST") val copied = deepCopy(original.node) as MutableMap<String, Any?>
+            renameTemplateChildren(copied, available, copies)
+            if (destination.containsKey(id)) insertAfter(destination, id, nextId, copied) else destination[nextId] = copied
+            created += nextId
+        }
+        return MultiEditResult(dump(root), created, copies)
+    }
+
+    fun ungroup(source: String, id: String): String {
+        val root = load(source)
+        val ref = findFrontend(root, id) ?: localizedError("editor.group-missing", "Group does not exist: $id", id)
+        localizedRequire(ref.node["type"] == "group", "editor.ungroup-only", "Only groups can be ungrouped")
+        val children = map(ref.node, "children", true).keys.toList()
+        if (children.isEmpty()) return delete(source, EditorProtocol.TAB_FRONTEND, id)
+        val parent = parentIndex(root)[id].orEmpty()
+        val moved = reparent(source, children, parent, id)
+        return delete(moved, EditorProtocol.TAB_FRONTEND, id)
+    }
+
     fun reorder(source: String, tab: Byte, selectedIds: List<String>, beforeId: String): String {
         requireSelection(selectedIds)
         val root = load(source)
         val roots = selectionRoots(root, tab, selectedIds)
-        val refs = roots.map { find(root, tab, it) ?: throw IllegalArgumentException("元素不存在: $it") }
+        val refs = roots.map { find(root, tab, it) ?: throw localizedArgumentFailure("editor.any-element-missing", "Element does not exist: $it", it) }
         val container = refs.first().container
-        require(refs.all { it.container === container }) { "拖动排序只能在同一层级内进行" }
-        require(beforeId.isBlank() || beforeId !in roots) { "不能把元素排序到自身之前" }
+        localizedRequire(refs.all { it.container === container }, "editor.reorder-same-level", "Drag reordering is only allowed within the same level")
+        localizedRequire(beforeId.isBlank() || beforeId !in roots, "editor.reorder-self", "Cannot reorder an element before itself")
         if (beforeId.isNotBlank()) {
-            val target = find(root, tab, beforeId) ?: throw IllegalArgumentException("排序目标不存在: $beforeId")
-            require(target.container === container) { "拖动排序只能在同一层级内进行" }
+            val target = find(root, tab, beforeId) ?: throw localizedArgumentFailure("editor.reorder-target-missing", "Reorder target does not exist: $beforeId", beforeId)
+            localizedRequire(target.container === container, "editor.reorder-same-level", "Drag reordering is only allowed within the same level")
         }
         val moving = container.entries.filter { it.key in roots }.associateTo(linkedMapOf()) { it.key to it.value }
         val rebuilt = linkedMapOf<String, Any?>()
@@ -633,7 +699,7 @@ internal object YamlDocumentEditor {
             if (key !in roots) rebuilt[key] = value
         }
         if (!inserted) rebuilt.putAll(moving)
-        require(rebuilt.keys.toList() != container.keys.toList()) { "排序没有产生变化" }
+        localizedRequire(rebuilt.keys.toList() != container.keys.toList(), "editor.reorder-no-changes", "Reordering made no changes")
         container.clear(); container.putAll(rebuilt)
         return dump(root)
     }
@@ -642,50 +708,50 @@ internal object YamlDocumentEditor {
         requireSelection(selectedIds)
         val root = load(source)
         val roots = selectionRoots(root, EditorProtocol.TAB_FRONTEND, selectedIds)
-        require(beforeId.isBlank() || beforeId !in roots) { "不能把元素移动到自身之前" }
-        require(targetParentId.isBlank() || targetParentId !in roots) { "不能把元素移入自身" }
+        localizedRequire(beforeId.isBlank() || beforeId !in roots, "editor.move-before-self", "Cannot move an element before itself")
+        localizedRequire(targetParentId.isBlank() || targetParentId !in roots, "editor.move-into-self", "Cannot move an element into itself")
 
         val parents = parentIndex(root)
         if (targetParentId.isNotBlank()) {
             roots.forEach { rootId ->
                 var cursor = targetParentId
                 while (cursor.isNotBlank()) {
-                    require(cursor != rootId) { "不能把组移入自己的后代" }
+                    localizedRequire(cursor != rootId, "editor.move-into-descendant", "Cannot move a group into its own descendant")
                     cursor = parents[cursor].orEmpty()
                 }
             }
         }
 
         val target = targetParentId.takeIf { it.isNotBlank() }?.let { id ->
-            findFrontend(root, id) ?: throw IllegalArgumentException("目标组不存在: $id")
+            findFrontend(root, id) ?: throw localizedArgumentFailure("editor.target-group-missing", "Target group does not exist: $id", id)
         }
-        if (target != null) require(target.node["type"] == "group") { "目标父级必须是组" }
+        if (target != null) localizedRequire(target.node["type"] == "group", "editor.destination-group-required", "Target parent must be a group")
         val destination = target?.let { map(it.node, "children", true) } ?: frontend(root)
         if (beforeId.isNotBlank()) {
             val before = findFrontend(root, beforeId)
-                ?: throw IllegalArgumentException("插入目标不存在: $beforeId")
-            require(before.container === destination) { "插入目标不在目标层级中" }
+                ?: throw localizedArgumentFailure("editor.insertion-missing", "Insertion target does not exist: $beforeId", beforeId)
+            localizedRequire(before.container === destination, "editor.insertion-level-invalid", "Insertion target is not at the destination level")
         }
 
         val beforeWorld = worldMatrices(root)
         val targetWorld = if (targetParentId.isBlank()) Matrix4d() else beforeWorld[targetParentId]
-            ?: throw IllegalArgumentException("目标组不存在: $targetParentId")
+            ?: throw localizedArgumentFailure("editor.target-group-missing", "Target group does not exist: $targetParentId", targetParentId)
         val targetInverse = Matrix4d(targetWorld).also {
-            require(abs(it.determinant()) > 1e-9) { "目标层级变换不可逆，无法移动元素" }
+            localizedRequire(abs(it.determinant()) > 1e-9, "editor.destination-transform-invalid", "Destination level transform is not invertible; cannot move the element")
         }.invert()
 
         val moving = roots.map { id ->
-            val ref = findFrontend(root, id) ?: throw IllegalArgumentException("前端元素不存在: $id")
+            val ref = findFrontend(root, id) ?: throw localizedArgumentFailure("editor.element-missing", "Frontend element does not exist: $id", id)
             id to ref
         }
         moving.forEach { (id, ref) ->
-            require(ref.container.remove(id) != null) { "前端元素不存在: $id" }
+            localizedRequire(ref.container.remove(id) != null, "editor.element-missing", "Frontend element does not exist: $id", id)
         }
         val moved = linkedMapOf<String, Any?>()
         moving.forEach { (id, ref) ->
-            val oldWorld = beforeWorld[id] ?: throw IllegalArgumentException("前端元素不存在: $id")
+            val oldWorld = beforeWorld[id] ?: throw localizedArgumentFailure("editor.element-missing", "Frontend element does not exist: $id", id)
             val local = Matrix4d(targetInverse).mul(oldWorld)
-            writeTransform(ref.node, exactTransform(local))
+            writeTransform(ref.node, exactTransform(local, ref.node["type"] in setOf("item", "block")))
             moved[id] = ref.node
         }
 
@@ -701,16 +767,14 @@ internal object YamlDocumentEditor {
                 }
                 rebuilt[id] = node
             }
-            require(inserted) { "插入目标不存在: $beforeId" }
+            localizedRequire(inserted, "editor.insertion-missing", "Insertion target does not exist: $beforeId", beforeId)
             destination.clear()
             destination.putAll(rebuilt)
         }
 
         val afterWorld = worldMatrices(root)
         roots.forEach { id ->
-            require(sameMatrix(beforeWorld.getValue(id), afterWorld.getValue(id))) {
-                "无法在目标层级中精确保留 $id 的画面变换"
-            }
+            localizedRequire(sameMatrix(beforeWorld.getValue(id), afterWorld.getValue(id)), "editor.transform-preservation-failed", "Cannot exactly preserve the visual transform of $id at the destination level", id)
         }
         return dump(root)
     }
@@ -718,16 +782,17 @@ internal object YamlDocumentEditor {
     fun setProperty(source: String, tab: Byte, id: String, key: String, value: String): String {
         val root = load(source)
         val ref = if (tab == EditorProtocol.TAB_FRONTEND) findFrontend(root, id) else findBackend(root, id)
-        requireNotNull(ref) { "元素不存在: $id" }
+        localizedRequire(ref != null, "editor.any-element-missing", "Element does not exist: $id", id)
         if (key == "id") {
-            require(Regex("[a-z0-9][a-z0-9_-]*").matches(value)) { "键名只能使用小写字母、数字、下划线或连字符" }
-            require(value == id || value !in allIds(root)) { "元素键名已存在: $value" }
+            localizedRequire(value.isNotBlank() && value.none { it.isISOControl() || it == '/' || it == '\\' }, "editor.element-id-invalid", "Element ID must be nonempty and must not contain control characters or path separators")
+            localizedRequire(value == id || value !in allIds(root), "editor.element-key-exists", "Element key already exists: $value", value)
             if (value != id) renameKey(ref.container, id, value)
             return dump(root)
         }
         val property = propertiesForMap(tab, ref.id, ref.node).firstOrNull { it.key() == key }
-            ?: throw IllegalArgumentException("$id 不支持属性 $key")
-        val parsed = parseValue(property.type(), key, value)
+            ?: throw localizedArgumentFailure("editor.property-not-supported", "$id does not support property $key", id, key)
+        val parsed = parseValue(property.type(), key,
+            if (ref.node["type"] in setOf("image", "gif") && key == "color") value.removePrefix("&") else value)
         val segments = key.split('.')
         if (segments.size == 2 && segments[0] in setOf("offset", "rotation", "scale")) {
             val nested = map(ref.node, segments[0], true)
@@ -745,24 +810,24 @@ internal object YamlDocumentEditor {
         val root = load(source)
         val templateRoot = load(template.source)
         val sourceFrontend = frontend(templateRoot)
-        require(sourceFrontend.size == 1) { "模板必须只有一个根组" }
+        localizedRequire(sourceFrontend.size == 1, "editor.template-root-invalid", "Template must have exactly one root group")
         val originalRoot = sourceFrontend.entries.single()
         val ids = allIds(root).toMutableSet()
         val rootId = unique(originalRoot.key, ids)
         ids += rootId
         @Suppress("UNCHECKED_CAST")
         val node = deepCopy(originalRoot.value) as? MutableMap<String, Any?>
-            ?: throw IllegalArgumentException("模板根节点无效")
+            ?: throw localizedArgumentFailure("editor.template-root-node-invalid", "Invalid template root node")
         renameTemplateChildren(node, ids)
         frontend(root)[rootId] = node
         return EditResult(dump(root), rootId)
     }
 
     fun template(source: String, nodeId: String, templateId: String): String {
-        require(Regex("[a-z0-9][a-z0-9_-]*").matches(templateId)) { "模板名只能使用小写字母、数字、下划线或连字符" }
+        localizedRequire(Regex("[a-z0-9][a-z0-9_-]*").matches(templateId), "editor.template-name-invalid", "Template name must contain only lowercase letters, digits, underscores, or hyphens")
         val root = load(source)
-        val ref = findFrontend(root, nodeId) ?: throw IllegalArgumentException("组不存在: $nodeId")
-        require(ref.node["type"] == "group") { "只有组可以保存为模板" }
+        val ref = findFrontend(root, nodeId) ?: throw localizedArgumentFailure("editor.group-missing", "Group does not exist: $nodeId", nodeId)
+        localizedRequire(ref.node["type"] == "group", "editor.template-group-required", "Only groups can be saved as templates")
         val result = linkedMapOf<String, Any?>(
             "schema-version" to 1,
             "id" to templateId,
@@ -810,6 +875,9 @@ internal object YamlDocumentEditor {
             addVector(node, "rotation", 0.0, this)
             add(prop("scale.x", EditorProtocol.PROPERTY_NUMBER, nested(node, "scale", "x", 1.0)))
             add(prop("scale.y", EditorProtocol.PROPERTY_NUMBER, nested(node, "scale", "y", 1.0)))
+            if (node["type"] in setOf("item", "block")) {
+                add(prop("scale.z", EditorProtocol.PROPERTY_NUMBER, nested(node, "scale", "z", 1.0)))
+            }
             add(prop("visible", EditorProtocol.PROPERTY_BOOLEAN, node["visible"] ?: true))
             when (node["type"]?.toString()) {
                 "rectangle" -> direct(node, this, "width", number = true, "height", "color", "opacity")
@@ -825,12 +893,14 @@ internal object YamlDocumentEditor {
                         node["alignment"]?.toString() ?: "center", listOf("left", "center", "right")))
                     add(prop("update", EditorProtocol.PROPERTY_INTEGER, node["update"] ?: -1))
                 }
-                "image" -> {
+                "image", "gif" -> {
                     add(prop("source", EditorProtocol.PROPERTY_TEXT, node["source"] ?: node["path"] ?: node["image"] ?: node["material"] ?: ""))
                     add(prop("width", EditorProtocol.PROPERTY_NUMBER, node["width"] ?: ""))
                     add(prop("height", EditorProtocol.PROPERTY_NUMBER, node["height"] ?: ""))
+                    add(prop("color", EditorProtocol.PROPERTY_COLOR, node["color"]?.toString()?.removePrefix("&") ?: "#FFFFFF"))
                     add(prop("opacity", EditorProtocol.PROPERTY_INTEGER, node["opacity"] ?: 255))
                     add(prop("update", EditorProtocol.PROPERTY_INTEGER, node["update"] ?: -1))
+                    if (node["type"] == "gif") add(prop("speed", EditorProtocol.PROPERTY_NUMBER, node["speed"] ?: 1.0))
                 }
                 "item" -> {
                     add(prop("material", EditorProtocol.PROPERTY_TEXT, node["material"] ?: "minecraft:diamond_sword"))
@@ -850,6 +920,8 @@ internal object YamlDocumentEditor {
             add(prop("update", EditorProtocol.PROPERTY_INTEGER, node["update"] ?: -1))
             add(prop("condition", EditorProtocol.PROPERTY_TEXT, node["condition"] ?: ""))
             add(prop("actions", EditorProtocol.PROPERTY_MULTILINE, yamlValue(node["actions"])))
+            add(prop("on-hover", EditorProtocol.PROPERTY_MULTILINE, yamlValue(node["on-hover"])))
+            add(prop("on-leave", EditorProtocol.PROPERTY_MULTILINE, yamlValue(node["on-leave"])))
             add(prop("deny", EditorProtocol.PROPERTY_MULTILINE, yamlValue(node["deny"])))
         }
     }
@@ -883,20 +955,43 @@ internal object YamlDocumentEditor {
     private fun parseValue(type: Byte, key: String, value: String): Any? {
         if (key in setOf("width", "height") && value.isBlank()) return RemoveValue
         return when (type) {
-            EditorProtocol.PROPERTY_NUMBER -> value.toDoubleOrNull()?.also { require(it.isFinite()) { "$key 必须为有限数值" } }
-                ?: throw IllegalArgumentException("$key 必须为数值")
-            EditorProtocol.PROPERTY_INTEGER -> value.toIntOrNull() ?: throw IllegalArgumentException("$key 必须为整数")
+            EditorProtocol.PROPERTY_NUMBER -> value.toDoubleOrNull()?.also { localizedRequire(it.isFinite(), "editor.number-invalid", "$key must be a finite number", key) }
+                ?: throw localizedArgumentFailure("editor.number-required", "$key must be a number", key)
+            EditorProtocol.PROPERTY_INTEGER -> value.toIntOrNull() ?: throw localizedArgumentFailure("editor.integer-required", "$key must be an integer", key)
             EditorProtocol.PROPERTY_BOOLEAN -> when (value.lowercase()) {
-                "true" -> true; "false" -> false; else -> throw IllegalArgumentException("$key 必须为 true 或 false")
+                "true" -> true; "false" -> false; else -> throw localizedArgumentFailure("editor.boolean-required", "$key must be true or false", key)
             }
-            EditorProtocol.PROPERTY_COLOR -> value.also { require(Regex("#[0-9a-fA-F]{6}").matches(it)) { "$key 必须为 #RRGGBB；透明度请修改 opacity" } }
+            EditorProtocol.PROPERTY_COLOR -> value.also { localizedRequire(Regex("#[0-9a-fA-F]{6}").matches(it), "editor.color-invalid", "$key must be #RRGGBB; change opacity to adjust transparency", key) }
             EditorProtocol.PROPERTY_MULTILINE -> when (key) {
                 "tooltip" -> value.lines().filter { it.isNotEmpty() }
-                "actions", "deny" -> if (value.isBlank()) RemoveValue else Yaml(SafeConstructor(loaderOptions)).load<Any?>(value)
+                "actions", "on-hover", "on-leave", "deny" -> if (value.isBlank()) RemoveValue else Yaml(SafeConstructor(loaderOptions)).load<Any?>(value)
                 else -> value
             }
             else -> if (value.isBlank() && key in setOf("condition")) RemoveValue else value
         }
+    }
+
+    private fun initialNode(kind: Byte, initialSource: String): MutableMap<String, Any?> {
+        if (initialSource.isBlank() || (kind in setOf(EditorProtocol.KIND_IMAGE, EditorProtocol.KIND_GIF) && initialSource.startsWith("/") && '\n' !in initialSource && '\r' !in initialSource)) return defaultNode(kind, initialSource)
+        val parsed = Yaml(SafeConstructor(loaderOptions)).load<Any?>(initialSource)
+        localizedRequire(parsed is Map<*, *> && parsed.keys.all { it is String }, "editor.initial-yaml-invalid", "Initial element source must be a YAML object with string keys")
+        val node = parsed.entries.associateTo(linkedMapOf<String, Any?>()) { it.key as String to it.value }
+        val expectedType = when (kind) {
+            EditorProtocol.KIND_GROUP -> "group"
+            EditorProtocol.KIND_RECTANGLE -> "rectangle"
+            EditorProtocol.KIND_LINE -> "line"
+            EditorProtocol.KIND_FRAME -> "frame"
+            EditorProtocol.KIND_TEXT -> "text"
+            EditorProtocol.KIND_IMAGE -> "image"
+            EditorProtocol.KIND_GIF -> "gif"
+            EditorProtocol.KIND_ITEM -> "item"
+            EditorProtocol.KIND_BLOCK -> "block"
+            EditorProtocol.KIND_REGION -> "region"
+            else -> throw localizedArgumentFailure("editor.element-type-invalid", "Unknown element type: $kind", kind)
+        }
+        localizedRequire(node["type"] == expectedType, "editor.initial-type-invalid", "Initial element type must match $expectedType", expectedType)
+        if (kind == EditorProtocol.KIND_REGION) node.remove("type")
+        return node
     }
 
     private fun defaultNode(kind: Byte, initialSource: String): MutableMap<String, Any?> = when (kind) {
@@ -906,21 +1001,24 @@ internal object YamlDocumentEditor {
         EditorProtocol.KIND_FRAME -> linkedMapOf("type" to "frame", "width" to 100, "height" to 50, "thickness" to 1, "color" to "#FFFFFF")
         EditorProtocol.KIND_TEXT -> linkedMapOf("type" to "text", "content" to "&fText", "size" to 10)
         EditorProtocol.KIND_IMAGE -> linkedMapOf("type" to "image", "source" to (initialSource.ifBlank { "/example.png" }), "width" to 32, "height" to 32)
-        EditorProtocol.KIND_ITEM -> linkedMapOf("type" to "item", "material" to "minecraft:diamond_sword", "context" to "GUI", "scale" to linkedMapOf("x" to 32, "y" to 32))
-        EditorProtocol.KIND_BLOCK -> linkedMapOf("type" to "block", "block-data" to "minecraft:stone", "scale" to linkedMapOf("x" to 32, "y" to 32))
-        else -> throw IllegalArgumentException("未知前端元素类型")
+        EditorProtocol.KIND_GIF -> linkedMapOf("type" to "gif", "source" to (initialSource.ifBlank { "/example.gif" }), "width" to 32, "height" to 32, "speed" to 1.0)
+        EditorProtocol.KIND_ITEM -> linkedMapOf("type" to "item", "material" to "minecraft:diamond_sword", "context" to "GUI", "scale" to linkedMapOf("x" to 32, "y" to 32, "z" to 1))
+        EditorProtocol.KIND_BLOCK -> linkedMapOf("type" to "block", "block-data" to "minecraft:stone", "scale" to linkedMapOf("x" to 32, "y" to 32, "z" to 1))
+        EditorProtocol.KIND_REGION -> linkedMapOf("x" to 0, "y" to 0, "width" to 80, "height" to 30)
+        else -> throw localizedArgumentFailure("editor.frontend-type-invalid", "Unknown frontend element type")
     }
 
-    private fun renameTemplateChildren(node: MutableMap<String, Any?>, ids: MutableSet<String>) {
+    private fun renameTemplateChildren(node: MutableMap<String, Any?>, ids: MutableSet<String>, copies: MutableMap<String, String>? = null) {
         if (node["type"] != "group") return
         val children = map(node, "children", true)
         val renamed = linkedMapOf<String, Any?>()
         children.forEach { (originalId, childValue) ->
             val id = unique(originalId, ids)
             ids += id
+            copies?.put(originalId, id)
             @Suppress("UNCHECKED_CAST")
             val child = deepCopy(childValue) as MutableMap<String, Any?>
-            renameTemplateChildren(child, ids)
+            renameTemplateChildren(child, ids, copies)
             renamed[id] = child
         }
         children.clear(); children.putAll(renamed)
@@ -928,26 +1026,26 @@ internal object YamlDocumentEditor {
 
     private fun destination(root: MutableMap<String, Any?>, tab: Byte, parentId: String): MutableMap<String, Any?> {
         if (tab == EditorProtocol.TAB_BACKEND) {
-            require(parentId.isBlank()) { "点击区域不可被分组" }
+            localizedRequire(parentId.isBlank(), "editor.region-no-group", "Click regions cannot be grouped")
             return backend(root)
         }
-        require(tab == EditorProtocol.TAB_FRONTEND) { "未知编辑器 Tab" }
+        localizedRequire(tab == EditorProtocol.TAB_FRONTEND, "editor.tab-invalid", "Unknown editor tab")
         if (parentId.isBlank()) return frontend(root)
-        val parent = findFrontend(root, parentId) ?: throw IllegalArgumentException("目标组不存在: $parentId")
-        require(parent.node["type"] == "group") { "复制目标必须是组" }
+        val parent = findFrontend(root, parentId) ?: throw localizedArgumentFailure("editor.target-group-missing", "Target group does not exist: $parentId", parentId)
+        localizedRequire(parent.node["type"] == "group", "editor.copy-group-required", "Copy destination must be a group")
         return map(parent.node, "children", true)
     }
 
     private fun find(root: MutableMap<String, Any?>, tab: Byte, id: String): Ref? = when (tab) {
         EditorProtocol.TAB_FRONTEND -> findFrontend(root, id)
         EditorProtocol.TAB_BACKEND -> findBackend(root, id)
-        else -> throw IllegalArgumentException("未知编辑器 Tab")
+        else -> throw localizedArgumentFailure("editor.tab-invalid", "Unknown editor tab")
     }
 
     private fun selectionRoots(root: MutableMap<String, Any?>, tab: Byte, ids: List<String>): List<String> {
         val selected = ids.distinct().toSet()
-        require(selected.size == ids.distinct().size) { "选择中包含重复元素" }
-        selected.forEach { requireNotNull(find(root, tab, it)) { "元素不存在: $it" } }
+        localizedRequire(selected.size == ids.distinct().size, "editor.selection-duplicates", "Selection contains duplicate elements")
+        selected.forEach { localizedRequire(find(root, tab, it) != null, "editor.any-element-missing", "Element does not exist: $it", it) }
         if (tab == EditorProtocol.TAB_BACKEND) return ids.distinct()
         val parents = parentIndex(root)
         return ids.distinct().filter { id ->
@@ -997,6 +1095,7 @@ internal object YamlDocumentEditor {
         ),
         scaleX = numeric(nested(node, "scale", "x", 1.0), "scale.x"),
         scaleY = numeric(nested(node, "scale", "y", 1.0), "scale.y"),
+        scaleZ = numeric(nested(node, "scale", "z", 1.0), "scale.z"),
     )
 
     private fun numeric(value: Any?, path: String): Double {
@@ -1004,30 +1103,24 @@ internal object YamlDocumentEditor {
             is Number -> value.toDouble()
             else -> value?.toString()?.toDoubleOrNull()
         }
-        require(result != null && result.isFinite()) { "$path 必须为有限数值" }
+        localizedRequire(result != null && result.isFinite(), "editor.path-number-invalid", "$path must be a finite number", path)
         return result
     }
 
-    private fun exactTransform(matrix: Matrix4dc): Transform {
-        require(abs(matrix.m03()) < 1e-8 && abs(matrix.m13()) < 1e-8 &&
-                abs(matrix.m23()) < 1e-8 && abs(matrix.m33() - 1.0) < 1e-8) {
-            "目标组产生了不可表示的透视变换"
-        }
+    private fun exactTransform(matrix: Matrix4dc, allowScaleZ: Boolean): Transform {
+        localizedRequire(abs(matrix.m03()) < 1e-8 && abs(matrix.m13()) < 1e-8 &&
+                abs(matrix.m23()) < 1e-8 && abs(matrix.m33() - 1.0) < 1e-8, "editor.perspective-unsupported", "Target group produces a perspective transform that cannot be represented")
         val xAxis = Vector3d(matrix.m00(), matrix.m01(), matrix.m02())
         val yAxis = Vector3d(matrix.m10(), matrix.m11(), matrix.m12())
         val zAxis = Vector3d(matrix.m20(), matrix.m21(), matrix.m22())
         var scaleX = xAxis.length()
         val scaleY = yAxis.length()
         val scaleZ = zAxis.length()
-        require(scaleX > 1e-9 && scaleY > 1e-9 && scaleZ > 1e-9) { "目标组变换不可逆，无法移入元素" }
+        localizedRequire(scaleX > 1e-9 && scaleY > 1e-9 && scaleZ > 1e-9, "editor.target-transform-invalid", "Target group transform is not invertible; cannot move elements into it")
         xAxis.div(scaleX); yAxis.div(scaleY); zAxis.div(scaleZ)
-        require(abs(xAxis.dot(yAxis)) < 1e-7 && abs(xAxis.dot(zAxis)) < 1e-7 && abs(yAxis.dot(zAxis)) < 1e-7) {
-            "目标组与元素的非等比缩放会产生斜切，无法精确保留画面变换"
-        }
+        localizedRequire(abs(xAxis.dot(yAxis)) < 1e-7 && abs(xAxis.dot(zAxis)) < 1e-7 && abs(yAxis.dot(zAxis)) < 1e-7, "editor.shear-unsupported", "Nonuniform scaling of the target group and element produces shear; cannot exactly preserve the visual transform")
         val handedness = Vector3d(xAxis).cross(yAxis).dot(zAxis)
-        require(abs(abs(handedness) - 1.0) < 1e-7 && abs(scaleZ - 1.0) < 1e-7) {
-            "目标组变换超出菜单 YAML 可表示范围"
-        }
+        localizedRequire(abs(abs(handedness) - 1.0) < 1e-7 && (allowScaleZ || abs(scaleZ - 1.0) < 1e-7), "editor.yaml-transform-unsupported", "Target group transform cannot be represented in menu YAML")
         if (handedness < 0.0) {
             xAxis.negate()
             scaleX = -scaleX
@@ -1039,8 +1132,9 @@ internal object YamlDocumentEditor {
             rotation = Vec3(Math.toDegrees(angles.x), Math.toDegrees(angles.y), Math.toDegrees(angles.z)),
             scaleX = scaleX,
             scaleY = scaleY,
+            scaleZ = if (allowScaleZ) scaleZ else 1.0,
         )
-        require(sameMatrix(matrix, Transforms.local(result))) { "无法把画面变换转换为菜单 YAML 参数" }
+        localizedRequire(sameMatrix(matrix, Transforms.local(result)), "editor.transform-conversion-failed", "Cannot convert the visual transform to menu YAML parameters")
         return result
     }
 
@@ -1052,6 +1146,7 @@ internal object YamlDocumentEditor {
             "x" to scalar(transform.rotation.x), "y" to scalar(transform.rotation.y), "z" to scalar(transform.rotation.z),
         )
         node["scale"] = linkedMapOf("x" to scalar(transform.scaleX), "y" to scalar(transform.scaleY))
+            .apply { if (node["type"] in setOf("item", "block")) put("z", scalar(transform.scaleZ)) }
     }
 
     private fun scalar(value: Double): Number =
@@ -1066,9 +1161,9 @@ internal object YamlDocumentEditor {
         ).all { abs(it) <= tolerance }
 
     private fun requireSelection(ids: List<String>) {
-        require(ids.isNotEmpty()) { "没有选择元素" }
-        require(ids.size <= 1_000) { "一次最多操作 1000 个元素" }
-        require(ids.none { it.isBlank() }) { "元素键名不能为空" }
+        localizedRequire(ids.isNotEmpty(), "editor.selection-empty", "No elements selected")
+        localizedRequire(ids.size <= 1_000, "editor.selection-limit", "At most 1000 elements can be edited at once")
+        localizedRequire(ids.none { it.isBlank() }, "editor.element-key-empty", "Element key must not be empty")
     }
 
     private fun insertAfter(
@@ -1123,7 +1218,7 @@ internal object YamlDocumentEditor {
     private fun map(parent: MutableMap<String, Any?>, key: String, create: Boolean): MutableMap<String, Any?> {
         val existing = parent[key]
         if (existing is MutableMap<*, *>) return existing as MutableMap<String, Any?>
-        require(existing == null && create) { "$key 必须为 YAML 对象" }
+        localizedRequire(existing == null && create, "editor.yaml-object-required", "$key must be a YAML object", key)
         return linkedMapOf<String, Any?>().also { parent[key] = it }
     }
 
@@ -1148,7 +1243,7 @@ internal object YamlDocumentEditor {
     @Suppress("UNCHECKED_CAST")
     private fun load(source: String): MutableMap<String, Any?> {
         val raw = Yaml(SafeConstructor(loaderOptions)).load<Any?>(source) as? Map<*, *>
-            ?: throw IllegalArgumentException("菜单 YAML 根必须为对象")
+            ?: throw localizedArgumentFailure("editor.yaml-root-invalid", "Menu YAML root must be an object")
         return deepCopy(raw) as MutableMap<String, Any?>
     }
 
@@ -1206,7 +1301,7 @@ internal object YamlScalarPatcher {
                 setDirectScalar(doc, vectorBlock, "x", number(x))
                 setDirectScalar(doc, doc.blockAt(vectorIndex, doc.indent(doc.lines[vectorIndex])), "y", number(y))
             }
-            else -> throw IllegalArgumentException("$id.$key 使用别名或复杂结构，M3 为避免破坏 YAML 已设为只读")
+            else -> throw localizedArgumentFailure("editor.yaml-read-only", "$id.$key uses an alias or complex structure; M3 treats it as read-only to preserve YAML", id, key)
         }
         return doc.join()
     }
@@ -1228,7 +1323,7 @@ internal object YamlScalarPatcher {
         val line = doc.lines[found]
         val rawValue = line.substringAfter(':').substringBefore('#').trim()
         if (rawValue.startsWith("{") || rawValue.startsWith("[") || rawValue.startsWith("*") || rawValue.startsWith("&")) {
-            throw IllegalArgumentException("${block.key}.$key 使用复杂 YAML 结构，M3 为避免破坏文档已拒绝保存")
+            throw localizedArgumentFailure("editor.yaml-complex-rejected", "${block.key}.$key uses a complex YAML structure; M3 rejected saving to preserve the document", block.key, key)
         }
         val comment = line.substringAfter('#', "").let { if (it.isEmpty()) "" else " #$it" }
         doc.lines[found] = line.substringBefore(':') + ": $value$comment"
@@ -1257,7 +1352,8 @@ internal object YamlScalarPatcher {
 
         fun block(key: String): Block {
             val candidates = lines.indices.filter { parseBlockKey(lines[it]) == key }
-            require(candidates.size == 1) { if (candidates.isEmpty()) "YAML 中找不到元素 $key" else "YAML 中元素 $key 不唯一" }
+            if (candidates.isEmpty()) throw localizedArgumentFailure("editor.yaml-element-missing", "Element $key was not found in YAML", key)
+            localizedRequire(candidates.size == 1, "editor.yaml-element-duplicate", "Element $key is not unique in YAML", key)
             return blockAt(candidates.single(), indent(lines[candidates.single()]))
         }
 

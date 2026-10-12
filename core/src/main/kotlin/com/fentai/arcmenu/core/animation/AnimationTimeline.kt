@@ -87,7 +87,7 @@ class AnimationTimeline(
                 }
                 TrackProperty.SCALE -> {
                     val value = scale(track, progress)
-                    transforms[track.target] = (transforms[track.target] ?: base(track.target)).copy(scaleX = value.x, scaleY = value.y)
+                    transforms[track.target] = (transforms[track.target] ?: base(track.target)).copy(scaleX = value.x, scaleY = value.y, scaleZ = value.z ?: base(track.target).scaleZ)
                 }
                 TrackProperty.CONTENT -> contents[track.target] = content(track, progress)
                 TrackProperty.OPACITY -> opacities[track.target] = opacity(track, progress)
@@ -131,7 +131,8 @@ class AnimationTimeline(
         val (left, right, amount) = segment(track, progress)
         val a = left.value as ScaleFrameValue
         val b = right.value as ScaleFrameValue
-        return ScaleFrameValue(lerp(a.x, b.x, amount), lerp(a.y, b.y, amount))
+        return ScaleFrameValue(lerp(a.x, b.x, amount), lerp(a.y, b.y, amount),
+            if (a.z == null && b.z == null) null else lerp(a.z ?: base(track.target).scaleZ, b.z ?: base(track.target).scaleZ, amount))
     }
 
     private fun opacity(track: AnimationTrack, progress: Double): Int {

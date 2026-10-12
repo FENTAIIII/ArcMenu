@@ -1,5 +1,6 @@
 package com.fentai.arcmenu.paper.runtime
 
+import com.fentai.arcmenu.paper.localization.ArcMessages
 import com.fentai.arcmenu.core.behavior.*
 import com.fentai.arcmenu.paper.localization.LanguageManager
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer
@@ -241,13 +242,13 @@ class ActionExecutor(
             }
             is GiveItemAction -> {
                 if (!items.give(player, expand(action.specification))) {
-                    player.sendMessage(legacy("&c[ArcMenu] ${language.text(player, "runtime.invalid-give-item")}"))
+                    ArcMessages.reply(player, "&c${language.text(player, "runtime.invalid-give-item")}")
                 }
                 ActionResult.CONTINUE
             }
             is TakeItemAction -> {
                 if (!items.take(player, expand(action.specification))) {
-                    player.sendMessage(legacy("&c[ArcMenu] ${language.text(player, "runtime.invalid-take-item")}"))
+                    ArcMessages.reply(player, "&c${language.text(player, "runtime.invalid-take-item")}")
                 }
                 ActionResult.CONTINUE
             }
@@ -257,7 +258,7 @@ class ActionExecutor(
             }
             is EnchantItemAction -> {
                 if (!items.enchant(player, expand(action.specification))) {
-                    player.sendMessage(legacy("&c[ArcMenu] ${language.text(player, "runtime.invalid-enchant-item")}"))
+                    ArcMessages.reply(player, "&c${language.text(player, "runtime.invalid-enchant-item")}")
                 }
                 ActionResult.CONTINUE
             }

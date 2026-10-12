@@ -102,7 +102,7 @@ class AnimationCatalogTest {
                 """.trimIndent(), menus,
             )
         }
-        assertTrue(error.message.orEmpty().contains("只允许文本节点"))
+        assertTrue(error.message.orEmpty().contains("only supports text nodes"))
     }
 
     @Test
@@ -124,7 +124,7 @@ class AnimationCatalogTest {
                 """.trimIndent(), menus,
             )
         }
-        assertTrue(error.message.orEmpty().contains("同时拥有"))
+        assertTrue(error.message.orEmpty().contains("conflicting ownership"))
     }
 
     @Test

@@ -115,15 +115,15 @@ class MenuGeometryTest {
         assertEquals(27.78, positions.getValue("border/top").y, 1e-8)
     }
 
-    @Test fun `item and block scale derive model depth from smaller 2D axis`() {
-        val transform = Transform(scaleX = 40.0, scaleY = 30.0)
+    @Test fun `item and block scale uses explicit model depth`() {
+        val transform = Transform(scaleX = 40.0, scaleY = 30.0, scaleZ = 12.0)
         val properties = NodeProperties("model", transform)
         val item = ItemNode(properties, "minecraft:diamond_sword")
         val block = BlockNode(properties.copy(id = "block"), "minecraft:stone")
         val primitives = SceneCompiler().compile(listOf(item, block))
         for (primitive in primitives) {
             val direction = primitive.transform.transformDirection(Vector3d(0.0, 0.0, 1.0))
-            assertEquals(30.0, direction.z, 1e-8)
+            assertEquals(12.0, direction.z, 1e-8)
         }
     }
 

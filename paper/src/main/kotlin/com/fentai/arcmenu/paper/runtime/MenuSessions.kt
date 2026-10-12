@@ -1,5 +1,6 @@
 package com.fentai.arcmenu.paper.runtime
 
+import com.fentai.arcmenu.paper.localization.ArcMessages
 import com.fentai.arcmenu.api.*
 import com.fentai.arcmenu.core.animation.*
 import com.fentai.arcmenu.core.behavior.*
@@ -75,6 +76,7 @@ class MenuSessions(
         var lastPoint: MenuPoint? = null,
         var lastRegion: InteractionRegion? = null,
         var cursorChoosing: Boolean = false,
+        val hover: MenuHoverState = MenuHoverState(),
     )
 
     private data class Placement(val plane: MenuPlane, val worldId: UUID, val openedAt: Vec3)
@@ -273,6 +275,20 @@ class MenuSessions(
         it.overlay.entityCount + it.trackedEntities.size + 1 + if (it.pointerMode == PointerMode.MOUSE) 1 else 0
     }
 
+    fun packagePreviewCameraReady(player: Player): Boolean = pointer.isReady(player)
+
+    fun packagePreviewGeometry(player: Player): Map<String, Double>? {
+        val plane = sessions[player.uniqueId]?.plane ?: return null
+        val eye = player.eyeLocation.toVector()
+        val relative = plane.origin - Vec3(eye.x, eye.y, eye.z)
+        val distance = -relative.dot(plane.normal)
+        if (!distance.isFinite() || distance <= 0) return null
+        return mapOf("pixelsPerBlock" to plane.canvas.pixelsPerBlock, "distance" to distance,
+            "offsetX" to relative.dot(plane.right) * plane.canvas.pixelsPerBlock,
+            "offsetY" to relative.dot(plane.up) * plane.canvas.pixelsPerBlock)
+    }
+
+
     fun contains(player: Player) = sessions.containsKey(player.uniqueId) || applicationSessions.containsKey(player.uniqueId)
     fun isRuntime(player: Player) = sessions[player.uniqueId]?.mode == MenuViewMode.RUNTIME || applicationSessions.containsKey(player.uniqueId)
 
@@ -365,7 +381,12 @@ class MenuSessions(
             message(player, "runtime.menu-missing", menuId)
             return false
         }
-        if (!player.hasPermission("arcmenu.use") || (menu.permission.isNotBlank() && !player.hasPermission(menu.permission))) {
+        if (!player.hasPermission("arcmenu.use")) {
+            message(player, "runtime.menu-no-permission")
+            return false
+        }
+        if (menu.permission.isNotBlank() && !player.hasPermission(menu.permission)) {
+            if (menu.permissionDeniedMenu.isNotBlank()) return open(player, menu.permissionDeniedMenu, remember, arguments)
             message(player, "runtime.menu-no-permission")
             return false
         }
@@ -798,7 +819,7 @@ class MenuSessions(
         if (sessions[player.uniqueId] !== input.owner) catcherInputs.remove(player.uniqueId)
     }
 
-    fun activate(player: Player, button: PointerButton) {
+    fun activate(player: Player, button: PointerButton, shift: Boolean = player.isSneaking) {
         val application = applicationSessions[player.uniqueId]
         if (application != null) {
             if (!acceptsActivation(application.pointerMode, button)) return
@@ -809,7 +830,7 @@ class MenuSessions(
             val point = pointer.sample(player, application.plane)
             invokeApplication(application, "activate") {
                 application.callback?.onActivate(
-                    ArcMenuActivateEvent(point.api(), button.api(), application.pointerMode.api(), player.isSneaking),
+                    ArcMenuActivateEvent(point.api(), button.api(), application.pointerMode.api(), shift),
                 )
             }
             return
@@ -830,9 +851,7 @@ class MenuSessions(
         // input is suspended while the visual root is away from that base pose.
         if (session.transitionActive || session.closing) return
         if (region == null) return
-        // Both pointer modes use right click as their primary transport. Keep the
-        // established right/shift-right YAML route in either mode.
-        val input = if (player.isSneaking) ClickInput.SHIFT_RIGHT else ClickInput.RIGHT
+        val input = button.clickInput(shift)
         val condition = region.condition
         if (condition != null && !executor.evaluate(condition, player)) {
             executor.runActions(region.deny, player, this)
@@ -1050,6 +1069,7 @@ class MenuSessions(
                 session.view.hideTooltip()
                 continue
             }
+            session.view.tickGifImages()
             val timelineTick = session.timeline?.advance()
             if (timelineTick != null) {
                 if (timelineTick.exitFinished) {
@@ -1086,6 +1106,10 @@ class MenuSessions(
                         session.lastRegion = region
                         continue
                     }
+                    if (session.hover.changed(region) && !session.hover.update(region,
+                            isActive = { sessions[player.uniqueId] === session && !session.closing },
+                            accepts = { target -> target.condition?.let { executor.evaluate(it, player) } ?: true },
+                            execute = { reactions -> executor.run(reactions, player, this) })) continue
                     for ((id, node) in session.textNodes) {
                         if (node.updateTicks > 0 && session.ticks % node.updateTicks == 0L &&
                             session.timeline?.owns(id, TrackProperty.CONTENT) != true) {
@@ -1420,7 +1444,7 @@ class MenuSessions(
         id ?: language.text(player, "common.none"))
 
     private fun message(player: Player, key: String, vararg arguments: Any?) =
-        player.sendMessage(Component.text("[ArcMenu] ${language.text(player, key, *arguments)}"))
+        ArcMessages.reply(player, language.text(player, key, *arguments))
 
     private fun decimal(value: Double): String = String.format(Locale.ROOT, "%.2f", value)
 

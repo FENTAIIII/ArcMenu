@@ -1,5 +1,6 @@
 package com.fentai.arcmenu.paper.runtime
 
+import com.fentai.arcmenu.paper.localization.ArcMessages
 import com.fentai.arcmenu.core.config.MenuEntrypointCompiler
 import com.fentai.arcmenu.core.config.MenuEntrypoints
 import com.fentai.arcmenu.core.config.MenuFormatException
@@ -99,7 +100,7 @@ class MenuCommandRegistry(
         override fun execute(sender: CommandSender, commandLabel: String, args: Array<out String>): Boolean {
             val player = sender as? Player
             if (player == null) {
-                sender.sendMessage(Component.text("[ArcMenu] ${language.text(sender, "command.custom.player-only")}"))
+                ArcMessages.reply(sender, language.text(sender, "command.custom.player-only"))
                 return true
             }
             opener(player, menuId, args.toList())

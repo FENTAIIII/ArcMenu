@@ -19,17 +19,21 @@ class MenuParser {
             throw MenuFormatException("$sourceName: ${error.message}")
         }
         val root = ObjectReader(loaded, sourceName)
-        root.only("schema-version", "id", "permission", "open-commands", "main-menu", "canvas", "frontend", "backend", "events")
-        if (root.int("schema-version") != 1) root.fail("schema-version", "仅支持版本 1")
+        root.only("schema-version", "id", "permission", "permission-denied-menu", "open-commands", "main-menu", "canvas", "frontend", "backend", "events")
+        if (root.int("schema-version") != 1) root.fail("schema-version", "Only version 1 is supported")
         val id = root.string("id")
-        if (!Regex("[a-z0-9][a-z0-9_-]*").matches(id)) root.fail("id", "使用小写字母、数字、下划线或连字符")
+        if (!Regex("[a-z0-9][a-z0-9_-]*").matches(id)) root.fail("id", "Use lowercase letters, digits, underscores, or hyphens")
+        val permissionDeniedMenu = root.string("permission-denied-menu", "")
+        if (permissionDeniedMenu.isNotEmpty() && !Regex("[a-z0-9][a-z0-9_-]*").matches(permissionDeniedMenu)) {
+            root.fail("permission-denied-menu", "Use a static lowercase menu ID with letters, digits, underscores, or hyphens")
+        }
         val openCommands = root.strings("open-commands")
         openCommands.forEachIndexed { index, command ->
             if (command.length > 64 || !Regex("[a-z0-9][a-z0-9_-]*").matches(command)) {
-                root.fail("open-commands[$index]", "只能填写不带 / 的小写命令名，可使用数字、下划线或连字符")
+                root.fail("open-commands[$index]", "Use a lowercase command name without /; digits, underscores, and hyphens are allowed")
             }
         }
-        if (openCommands.distinct().size != openCommands.size) root.fail("open-commands", "不能包含重复命令")
+        if (openCommands.distinct().size != openCommands.size) root.fail("open-commands", "Must not contain duplicate commands")
         val canvas = root.obj("canvas")
         canvas.only("width", "height", "pixels-per-block", "distance")
         val definitionCanvas = Canvas(
@@ -40,7 +44,7 @@ class MenuParser {
         lateinit var structuredAction: (Map<*, *>, ObjectReader, String) -> MenuAction
         fun update(reader: ObjectReader, key: String = "update"): Int {
             val interval = reader.int(key, -1)
-            if (interval == 0 || interval < -1) reader.fail(key, "必须为 -1（不周期刷新）或大于 0 的 tick 间隔")
+            if (interval == 0 || interval < -1) reader.fail(key, "Must be -1 (no periodic refresh) or a positive tick interval")
             return interval
         }
         fun action(value: Any?, reader: ObjectReader, key: String): MenuAction {
@@ -49,10 +53,10 @@ class MenuParser {
                 is Map<*, *> -> {
                     return structuredAction(value, reader, key)
                 }
-                else -> reader.fail(key, "动作必须为字符串或单项动作映射")
+                else -> reader.fail(key, "Action must be a string or a single-entry action mapping")
             }
             return try { ActionLanguage.parse(source) } catch (error: BehaviorSyntaxException) {
-                reader.fail(key, error.message ?: "无效动作")
+                reader.fail(key, error.message ?: "Invalid action")
             }
         }
         fun actionList(value: Any?, reader: ObjectReader, key: String): List<MenuAction> = when (value) {
@@ -60,25 +64,25 @@ class MenuParser {
             is String -> listOf(action(value, reader, key))
             is List<*> -> value.mapIndexed { index, item -> action(item, reader, "$key[$index]") }
             is Map<*, *> -> listOf(action(value, reader, key))
-            else -> reader.fail(key, "必须为动作字符串、单项动作映射或动作列表")
+            else -> reader.fail(key, "Must be an action string, a single-entry action mapping, or an action list")
         }
         fun condition(value: Any?, reader: ObjectReader, key: String): ConditionExpression {
-            val source = value as? String ?: reader.fail(key, "条件必须为字符串")
+            val source = value as? String ?: reader.fail(key, "Condition must be a string")
             return try { ConditionLanguage.parse(source) } catch (error: BehaviorSyntaxException) {
-                reader.fail(key, error.message ?: "无效条件")
+                reader.fail(key, error.message ?: "Invalid condition")
             }
         }
         fun stringMap(value: Any?, reader: ObjectReader, key: String): Map<String, Any?> {
-            val map = value as? Map<*, *> ?: reader.fail(key, "必须为对象")
-            if (map.keys.any { it !is String }) reader.fail(key, "对象键必须为字符串")
+            val map = value as? Map<*, *> ?: reader.fail(key, "Must be an object")
+            if (map.keys.any { it !is String }) reader.fail(key, "Object keys must be strings")
             @Suppress("UNCHECKED_CAST")
             return map as Map<String, Any?>
         }
         fun intValue(value: Any?, reader: ObjectReader, key: String, fallback: Int): Int {
             if (value == null) return fallback
-            val number = (value as? Number)?.toDouble() ?: reader.fail(key, "必须为整数")
+            val number = (value as? Number)?.toDouble() ?: reader.fail(key, "Must be an integer")
             if (!number.isFinite() || number % 1 != 0.0 || number < Int.MIN_VALUE || number > Int.MAX_VALUE) {
-                reader.fail(key, "必须为有效整数")
+                reader.fail(key, "Must be a valid integer")
             }
             return number.toInt()
         }
@@ -96,8 +100,8 @@ class MenuParser {
             val original = stringMap(value, reader, key)
             val result = linkedMapOf<String, Any?>()
             for ((rawKey, item) in original) {
-                val canonical = conditionalKey(rawKey) ?: reader.fail("$key.$rawKey", "条件动作组不支持该字段")
-                if (result.containsKey(canonical)) reader.fail("$key.$rawKey", "与另一个 $canonical 别名重复")
+                val canonical = conditionalKey(rawKey) ?: reader.fail("$key.$rawKey", "Unsupported conditional action group field")
+                if (result.containsKey(canonical)) reader.fail("$key.$rawKey", "Duplicates another alias for $canonical")
                 result[canonical] = item
             }
             return result
@@ -105,7 +109,7 @@ class MenuParser {
         var reactionOrder = 0
         fun conditionalReaction(value: Any?, reader: ObjectReader, key: String, defaultPriority: Int): ActionReaction {
             val map = conditionalMap(value, reader, key)
-            if (!map.containsKey("actions") && !map.containsKey("deny")) reader.fail(key, "条件动作组至少需要 actions 或 deny")
+            if (!map.containsKey("actions") && !map.containsKey("deny")) reader.fail(key, "Conditional action group requires actions or deny")
             return ActionReaction(
                 intValue(map["priority"], reader, "$key.priority", defaultPriority), reactionOrder++,
                 map["condition"]?.let { condition(it, reader, "$key.condition") },
@@ -123,22 +127,22 @@ class MenuParser {
             is Map<*, *> -> if (value.keys.all { conditionalKey(it) != null }) {
                 listOf(conditionalReaction(value, reader, key, 0))
             } else listOf(ActionReaction(0, reactionOrder++, actions = listOf(action(value, reader, key))))
-            else -> reader.fail(key, "必须为动作、动作列表或条件动作组")
+            else -> reader.fail(key, "Must be an action, action list, or conditional action group")
         }
         structuredAction = fun(value: Map<*, *>, reader: ObjectReader, key: String): MenuAction {
-            if (value.size != 1 || value.keys.singleOrNull() !is String) reader.fail(key, "映射动作必须只有一个字符串动作名")
+            if (value.size != 1 || value.keys.singleOrNull() !is String) reader.fail(key, "Action mapping must have exactly one string action name")
             val entry = value.entries.single()
             val actionName = entry.key.toString()
             val normalized = ActionLanguage.normalizeName(actionName)
             if (normalized in setOf("catcher", "input-catcher")) {
                 val stages = stringMap(entry.value, reader, "$key.$actionName")
-                if (stages.isEmpty()) reader.fail("$key.$actionName", "catcher 至少需要一个输入阶段")
+                if (stages.isEmpty()) reader.fail("$key.$actionName", "catcher requires at least one input stage")
                 return CatcherAction(stages.map { (stageId, stageValue) ->
                     val stage = ObjectReader(stageValue, "$key.$actionName.$stageId")
                     stage.only("type", "start", "before", "cancel", "end", "after", "display", "name", "title", "content", "book", "item-left", "item-right")
                     val typeName = stage.string("type", "CHAT")
                     if (!typeName.equals("CHAT", true)) {
-                        stage.fail("type", "当前跨版本实现只支持 TrMenu CHAT catcher；SIGN/ANVIL/BOOK 需要版本输入适配器")
+                        stage.fail("type", "The current cross-version implementation only supports TrMenu CHAT catcher; SIGN/ANVIL/BOOK require version-specific input adapters")
                     }
                     CatcherStage(
                         stageId, CatcherType.CHAT,
@@ -149,19 +153,21 @@ class MenuParser {
                 })
             }
             val argument = entry.value
-            if (argument is Map<*, *> || argument is List<*>) reader.fail(key, "动作 $actionName 不接受嵌套对象")
+            if (argument is Map<*, *> || argument is List<*>) reader.fail(key, "Action $actionName does not accept nested objects")
             return try { ActionLanguage.parse("$actionName: ${argument ?: ""}") } catch (error: BehaviorSyntaxException) {
-                reader.fail(key, error.message ?: "无效动作")
+                reader.fail(key, error.message ?: "Invalid action")
             }
         }
         fun clickTrigger(key: String, reader: ObjectReader): ClickTrigger = when (key.lowercase().replace('_', '-')) {
             "all", "any" -> ClickTrigger.ALL
             "left" -> ClickTrigger.LEFT
             "right" -> ClickTrigger.RIGHT
+            "middle" -> ClickTrigger.MIDDLE
             "shift" -> ClickTrigger.SHIFT
             "shift-left" -> ClickTrigger.SHIFT_LEFT
             "shift-right" -> ClickTrigger.SHIFT_RIGHT
-            else -> reader.fail("actions.$key", "M2 不支持点击类型；可用 all/left/right/shift/shift-left/shift-right")
+            "shift-middle" -> ClickTrigger.SHIFT_MIDDLE
+            else -> reader.fail("actions.$key", "Unsupported M2 click type; use all/left/right/middle/shift/shift-left/shift-right/shift-middle")
         }
         fun clickActions(value: Any?, reader: ObjectReader): ClickActions {
             if (value == null) return ClickActions()
@@ -170,7 +176,7 @@ class MenuParser {
             if (map.keys.all { conditionalKey(it) != null }) {
                 return ClickActions(listOf(ClickActionGroup(ClickTrigger.ALL, reactions(value, reader, "actions"))))
             }
-            val clickKeys = setOf("all", "any", "left", "right", "shift", "shift-left", "shift-right")
+            val clickKeys = setOf("all", "any", "left", "right", "middle", "shift", "shift-left", "shift-right", "shift-middle")
             if (!map.keys.all { it.lowercase().replace('_', '-') in clickKeys }) {
                 return ClickActions(listOf(ClickActionGroup(ClickTrigger.ALL, reactions(value, reader, "actions"))))
             }
@@ -179,13 +185,13 @@ class MenuParser {
             })
         }
         fun register(key: String, reader: ObjectReader) {
-            if (key.isBlank() || key.any { it.isISOControl() || it == '/' || it == '\\' }) reader.fail("", "元素 ID 不能为空或包含控制字符、路径分隔符")
-            if (!ids.add(key)) reader.fail("", "重复元素 ID: $key（前后端及所有组内必须唯一）")
+            if (key.isBlank() || key.any { it.isISOControl() || it == '/' || it == '\\' }) reader.fail("", "Element ID must be nonempty and must not contain control characters or path separators")
+            if (!ids.add(key)) reader.fail("", "Duplicate element ID: $key (must be unique across frontend, backend, and all groups)")
         }
         fun visual(key: String, reader: ObjectReader): VisualNode {
             register(key, reader)
             val common = arrayOf("type", "offset", "rotation", "scale", "visible")
-            val properties = NodeProperties(key, transform(reader), reader.bool("visible", true))
+            val properties = NodeProperties(key, transform(reader, reader.string("type") in setOf("item", "block")), reader.bool("visible", true))
             return when (val type = reader.string("type")) {
                 "group" -> {
                     reader.only(*common, "children")
@@ -201,42 +207,47 @@ class MenuParser {
                     val width = reader.positive("width")
                     val height = reader.positive("height")
                     val thickness = reader.positive("thickness")
-                    if (thickness * 2 >= minOf(width, height)) reader.fail("thickness", "必须小于宽和高的一半")
+                    if (thickness * 2 >= minOf(width, height)) reader.fail("thickness", "Must be less than half the width and height")
                     FrameNode(properties, width, height, thickness, reader.color())
                 }
                 "text" -> {
                     reader.only(*common, "content", "size", "font", "opacity", "line-width", "alignment", "update")
                     val font = reader.string("font", "minecraft:default")
-                    if (!Regex("[a-z0-9_.-]+:[a-z0-9_./-]+").matches(font)) reader.fail("font", "必须为 namespace:path")
+                    if (!Regex("[a-z0-9_.-]+:[a-z0-9_./-]+").matches(font)) reader.fail("font", "Must use namespace:path")
                     val alignment = reader.string("alignment", "center")
-                    if (alignment !in setOf("left", "center", "right")) reader.fail("alignment", "必须为 left、center 或 right")
+                    if (alignment !in setOf("left", "center", "right")) reader.fail("alignment", "Must be left, center, or right")
                     val lineWidth = reader.int("line-width", 200)
-                    if (lineWidth <= 0) reader.fail("line-width", "必须大于 0")
+                    if (lineWidth <= 0) reader.fail("line-width", "Must be greater than 0")
                     TextNode(properties, reader.string("content"), reader.positive("size", 10.0), font, reader.opacity(), lineWidth, alignment, update(reader))
                 }
-                "image" -> {
-                    reader.only(*common, "source", "path", "image", "material", "width", "height", "opacity", "update")
+                "image", "gif" -> {
+                    val animated = type == "gif"
+                    val imageFields = arrayOf("source", "path", "image", "material", "width", "height", "opacity", "update", "color")
+                    if (animated) reader.only(*common, *imageFields, "speed") else reader.only(*common, *imageFields)
                     val sourceKeys = listOf("source", "path", "image", "material").filter(reader::has)
-                    if (sourceKeys.size != 1) reader.fail("source", "图片必须且只能填写 source（兼容 path/image/material）中的一个")
+                    if (sourceKeys.size != 1) reader.fail("source", "Image must specify exactly one source (aliases: path/image/material)")
                     val source = reader.string(sourceKeys.single())
                     val dynamic = '%' in source
-                    val pathPattern = if (dynamic) Regex("/[A-Za-z0-9_%:./-]+\\.png") else Regex("/[a-z0-9_./-]+\\.png")
+                    val extension = if (animated) "gif" else "png"
+                    val pathPattern = if (dynamic) Regex("/[A-Za-z0-9_%:./-]+\\.$extension") else Regex("/[a-z0-9_./-]+\\.$extension")
                     if (!pathPattern.matches(source) || source.contains("//") ||
                         source.split('/').any { it == "." || it == ".." } || source.count { it == '%' } % 2 != 0) {
-                        reader.fail(sourceKeys.single(), "必须为 images 虚拟根下的小写 PNG 路径，例如 /ui/logo.png")
+                        reader.fail(sourceKeys.single(), "Must be a lowercase ${extension.uppercase()} path under the images virtual root, such as /ui/logo.$extension")
                     }
                     ImageNode(
                         properties, source,
                         if (reader.has("width")) reader.positive("width") else null,
                         if (reader.has("height")) reader.positive("height") else null,
                         reader.opacity(), update(reader),
+                        if (reader.has("color")) reader.imageColor() else null,
+                        animated, if (animated) reader.positive("speed", 1.0) else 1.0,
                     )
                 }
                 "item" -> {
                     reader.only(*common, "material", "context")
                     val context = reader.string("context", "GUI")
                     if (context !in setOf("GUI", "HEAD", "FIXED", "GROUND", "NONE", "FIRSTPERSON_LEFTHAND", "FIRSTPERSON_RIGHTHAND", "THIRDPERSON_LEFTHAND", "THIRDPERSON_RIGHTHAND")) {
-                        reader.fail("context", "无效的物品展示上下文")
+                        reader.fail("context", "Invalid item display context")
                     }
                     ItemNode(properties, reader.string("material"), context)
                 }
@@ -244,13 +255,13 @@ class MenuParser {
                     reader.only(*common, "block-data")
                     BlockNode(properties, reader.string("block-data"))
                 }
-                else -> reader.fail("type", "未知前端类型: $type")
+                else -> reader.fail("type", "Unknown frontend type: $type")
             }
         }
         val frontend = root.obj("frontend").entries().map { (id, reader) -> visual(id, reader) }
         val backend = root.obj("backend").entries().map { (key, reader) ->
             register(key, reader)
-            reader.only("x", "y", "width", "height", "priority", "tooltip", "update", "actions", "condition", "deny")
+            reader.only("x", "y", "width", "height", "priority", "tooltip", "update", "actions", "condition", "deny", "on-hover", "on-leave")
             InteractionRegion(
                 id = key, x = reader.number("x", 0.0), y = reader.number("y", 0.0),
                 width = reader.positive("width"), height = reader.positive("height"),
@@ -259,6 +270,8 @@ class MenuParser {
                 condition = reader.raw("condition")?.let { condition(it, reader, "condition") },
                 actions = clickActions(reader.raw("actions"), reader),
                 deny = actionList(reader.raw("deny"), reader, "deny"),
+                onHover = reactions(reader.raw("on-hover"), reader, "on-hover"),
+                onLeave = reactions(reader.raw("on-leave"), reader, "on-leave"),
             )
         }
         val eventReader = root.obj("events")
@@ -276,68 +289,75 @@ class MenuParser {
             events = events,
             openCommands = openCommands,
             mainMenu = root.bool("main-menu", false),
+            permissionDeniedMenu = permissionDeniedMenu,
         ), source, sourceName)
     }
 
-    private fun transform(reader: ObjectReader): Transform {
+    private fun transform(reader: ObjectReader, model: Boolean): Transform {
         fun vector(name: String): Vec3 {
             val obj = reader.obj(name)
             obj.only("x", "y", "z")
             return Vec3(obj.number("x", 0.0), obj.number("y", 0.0), obj.number("z", 0.0))
         }
         val scale = reader.obj("scale")
-        scale.only("x", "y")
+        if (model) scale.only("x", "y", "z") else scale.only("x", "y")
         val x = scale.number("x", 1.0)
         val y = scale.number("y", 1.0)
-        if (x == 0.0 || y == 0.0) scale.fail("", "静态缩放不能为 0；隐藏节点请使用 visible: false")
-        return Transform(vector("offset"), vector("rotation"), x, y)
+        val z = if (model) scale.number("z", 1.0) else 1.0
+        if (x == 0.0 || y == 0.0 || z == 0.0) scale.fail("", "Static scale must be nonzero; use visible: false to hide a node")
+        return Transform(vector("offset"), vector("rotation"), x, y, z)
     }
 
     private class ObjectReader(value: Any?, private val path: String) {
         private val values: Map<String, Any?> = (value as? Map<*, *>)?.let { map ->
-            if (map.keys.any { it !is String }) fail("", "对象键必须是字符串（特殊 ID 请加引号）")
+            if (map.keys.any { it !is String }) fail("", "Object keys must be strings (quote special IDs)")
             @Suppress("UNCHECKED_CAST")
             (map as Map<String, Any?>)
-        } ?: fail("", "必须为 YAML 对象")
+        } ?: fail("", "Must be a YAML object")
 
         fun fail(key: String, message: String): Nothing = throw MenuFormatException("$path${if (key.isEmpty()) "" else ".$key"}: $message")
         fun has(key: String) = values.containsKey(key)
         fun raw(key: String): Any? = values[key]
         fun only(vararg allowed: String) {
-            values.keys.firstOrNull { it !in allowed }?.let { fail(it, "不支持的字段；请检查拼写或当前阶段能力") }
+            values.keys.firstOrNull { it !in allowed }?.let { fail(it, "Unsupported field; check its spelling and support in the current stage") }
         }
         fun entries() = values.map { (key, value) -> key to ObjectReader(value, "$path.$key") }
         fun obj(key: String) = ObjectReader(if (has(key)) values[key] else emptyMap<String, Any?>(), "$path.$key")
         fun string(key: String, default: String? = null): String =
-            if (!has(key) && default != null) default else values[key] as? String ?: fail(key, "必须为字符串")
+            if (!has(key) && default != null) default else values[key] as? String ?: fail(key, "Must be a string")
         fun bool(key: String, default: Boolean): Boolean =
-            if (!has(key)) default else values[key] as? Boolean ?: fail(key, "必须为 true 或 false")
+            if (!has(key)) default else values[key] as? Boolean ?: fail(key, "Must be true or false")
         fun number(key: String, default: Double? = null): Double {
             if (!has(key) && default != null) return default
-            val number = (values[key] as? Number)?.toDouble() ?: fail(key, "必须为数字")
-            if (!number.isFinite()) fail(key, "必须为有限数值")
+            val number = (values[key] as? Number)?.toDouble() ?: fail(key, "Must be a number")
+            if (!number.isFinite()) fail(key, "Must be a finite number")
             return number
         }
         fun positive(key: String, default: Double? = null): Double = number(key, default).also {
-            if (it <= 0.0) fail(key, "必须大于 0")
+            if (it <= 0.0) fail(key, "Must be greater than 0")
         }
         fun int(key: String, default: Int? = null): Int {
             val value = number(key, default?.toDouble())
-            if (value % 1 != 0.0 || value < Int.MIN_VALUE || value > Int.MAX_VALUE) fail(key, "必须为有效整数")
+            if (value % 1 != 0.0 || value < Int.MIN_VALUE || value > Int.MAX_VALUE) fail(key, "Must be a valid integer")
             return value.toInt()
         }
-        fun opacity(): Int = int("opacity", 255).also { if (it !in 0..255) fail("opacity", "必须介于 0 和 255") }
+        fun opacity(): Int = int("opacity", 255).also { if (it !in 0..255) fail("opacity", "Must be between 0 and 255") }
         fun color(): Int {
             val raw = string("color", "#FFFFFF")
-            if (!Regex("#[0-9a-fA-F]{6}").matches(raw)) fail("color", "必须为带引号的 #RRGGBB；透明度单独填写 opacity")
+            if (!Regex("#[0-9a-fA-F]{6}").matches(raw)) fail("color", "Must be a quoted #RRGGBB; specify transparency separately with opacity")
             return (opacity() shl 24) or raw.substring(1).toInt(16)
+        }
+        fun imageColor(): Int {
+            val raw = string("color").removePrefix("&")
+            if (!Regex("#[0-9a-fA-F]{6}").matches(raw)) fail("color", "Must be a quoted #RRGGBB or &#RRGGBB; specify transparency separately with opacity")
+            return raw.substring(1).toInt(16)
         }
         fun strings(key: String): List<String> {
             if (!has(key)) return emptyList()
             val value = values[key]
             if (value is String) return listOf(value)
-            val list = value as? List<*> ?: fail(key, "必须为字符串或字符串列表")
-            return list.mapIndexed { index, item -> item as? String ?: fail("$key[$index]", "必须为字符串") }
+            val list = value as? List<*> ?: fail(key, "Must be a string or a list of strings")
+            return list.mapIndexed { index, item -> item as? String ?: fail("$key[$index]", "Must be a string") }
         }
     }
 }

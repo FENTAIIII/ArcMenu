@@ -5,6 +5,22 @@ import org.junit.jupiter.api.Test
 import java.io.ByteArrayOutputStream
 
 class EditorProtocolTest {
+    @Test fun `old protocol is identifiable for a vanilla chat upgrade message`() {
+        val old = EditorProtocol.encode(EditorProtocol.HelloPacket("0.1.0-M3.3"))
+        old[4] = 8
+        assertThrows(EditorProtocol.ProtocolMismatchException::class.java) { EditorProtocol.decode(old) }
+        assertFalse(EditorProtocol.supportsClient("0.1.0-M3.3"))
+        assertFalse(EditorProtocol.supportsClient(null))
+        assertTrue(EditorProtocol.supportsClient("1.0.0"))
+        assertTrue(EditorProtocol.supportsClient("1.0.1"))
+        assertTrue(EditorProtocol.supportsClient("1.1.0"))
+        assertTrue(EditorProtocol.supportsClient("1.2.0"))
+        assertTrue(EditorProtocol.supportsClient("1.2.1"))
+        assertTrue(EditorProtocol.supportsClient("3.0.0"))
+        assertEquals("3.0.0", EditorProtocol.EDITOR_VERSION)
+        assertEquals(9, EditorProtocol.VERSION)
+    }
+
     private val pointer = EditorProtocol.Pointer(
         640.0, 360.0, 160.0, 90.0, 960.0, 540.0, 0.0, 0.0,
     )
@@ -26,6 +42,7 @@ class EditorProtocolTest {
             EditorProtocol.ClosePacket(),
             EditorProtocol.ProbePacket(8, EditorProtocol.TAB_BACKEND, pointer),
             EditorProtocol.CreatePacket(8, EditorProtocol.TAB_FRONTEND, EditorProtocol.KIND_IMAGE, "group", "/ui/card.png"),
+            EditorProtocol.CreatePacket(8, EditorProtocol.TAB_FRONTEND, EditorProtocol.KIND_GIF, "group", "/ui/spinner.gif"),
             EditorProtocol.DeletePacket(8, EditorProtocol.TAB_FRONTEND, "text"),
             EditorProtocol.DeleteManyPacket(8, EditorProtocol.TAB_FRONTEND, listOf("text", "image")),
             EditorProtocol.DuplicatePacket(8, EditorProtocol.TAB_FRONTEND, listOf("card", "text"), "group", false),
@@ -40,6 +57,11 @@ class EditorProtocolTest {
                 "26.1.2", nodes, emptyList(),
                 listOf(EditorProtocol.ImageSnapshot("/example.png", 64, 32)),
                 listOf(EditorProtocol.TemplateSnapshot("saved-card", "card", 3))),
+            EditorProtocol.SnapshotPacket(8, "gif", 320.0, 180.0, true, false, "26.3",
+                listOf(EditorProtocol.NodeSnapshot("animation", "", EditorProtocol.KIND_GIF, 0.0, 0.0, 32.0, 32.0, 0.0, true, false,
+                    listOf(EditorProtocol.PropertySnapshot("source", EditorProtocol.PROPERTY_TEXT, "/ui/spinner.gif"),
+                        EditorProtocol.PropertySnapshot("speed", EditorProtocol.PROPERTY_NUMBER, "0.5")))), emptyList(),
+                listOf(EditorProtocol.ImageSnapshot("/ui/spinner.gif", 32, 32)), emptyList()),
             EditorProtocol.AckPacket(EditorProtocol.OP_MOVE, 9, "card",
                 20.0, 30.0, 110.0, 55.0, 20.0, 30.0, "card-area", true, false, "ok"),
             EditorProtocol.ErrorPacket(9, "revision conflict"),

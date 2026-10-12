@@ -123,7 +123,7 @@ class ArcMenuSurface(
 }
 
 data class ArcMenuPoint(val x: Double, val y: Double)
-enum class ArcMenuPointerButton { LEFT, RIGHT }
+enum class ArcMenuPointerButton { LEFT, RIGHT, MIDDLE }
 enum class ArcMenuApplicationCloseReason { REQUESTED, BACK, REPLACED, PLAYER_QUIT, PLUGIN_DISABLE, OWNER_DISABLED, ERROR }
 
 data class ArcMenuSurfaceEvent(val surface: ArcMenuSurface, val initial: Boolean)

@@ -1,5 +1,7 @@
 package com.fentai.arcmenu.paper.input
 
+import com.fentai.arcmenu.paper.runtime.PointerButton
+import com.fentai.arcmenu.paper.platform.ArcScheduler
 import com.fentai.arcmenu.core.geometry.MenuPlane
 import com.fentai.arcmenu.core.geometry.Ray
 import com.fentai.arcmenu.core.model.Canvas
@@ -94,6 +96,7 @@ class PointerController(
     private val plugin: Plugin,
     initialSettings: PointerSettings,
     private val entitySpawned: () -> Unit = {},
+    private val activated: (Player, PointerButton, Boolean) -> Unit = { _, _, _ -> },
 ) : PointerSource, AutoCloseable {
     private data class CursorState(
         var point: MenuPoint,
@@ -109,10 +112,12 @@ class PointerController(
         var ending: Boolean = false,
     )
 
+    private val activeInputs = ConcurrentHashMap.newKeySet<UUID>()
     private val touch = TouchPointer()
     private val cursors = ConcurrentHashMap<UUID, CursorState>()
+    private val menuInput = MenuInputBridge(plugin, { it.uniqueId in activeInputs }, activated)
     private val preferenceKey = NamespacedKey(plugin, "pointer-mode")
-    private val packets = ProtocolPointerBridge(plugin, ::consumeRotation, ::consumePosition, ::acceptSyntheticTeleport)
+    private val packets = ProtocolPointerBridge(plugin, ::consumeRotation, ::consumePosition, ::acceptSyntheticTeleport, ::consumeInput, { it.uniqueId in activeInputs })
     @Volatile var settings: PointerSettings = initialSettings
         private set
 
@@ -138,8 +143,12 @@ class PointerController(
         check(Bukkit.isPrimaryThread()) { "摄像机实体只能在服务端主线程创建" }
         if (mode != PointerMode.MOUSE) {
             end(player)
+            activeInputs.add(player.uniqueId)
+            menuInput.state(player, true)
             return mode
         }
+        activeInputs.add(player.uniqueId)
+        menuInput.state(player, true)
         val existing = cursors[player.uniqueId]
         if (existing == null) {
             val camera = spawnCamera(player, plane)
@@ -220,6 +229,8 @@ class PointerController(
     }
 
     fun end(player: Player) {
+        activeInputs.remove(player.uniqueId)
+        menuInput.state(player, false)
         check(Bukkit.isPrimaryThread()) { "摄像机实体只能在服务端主线程移除" }
         val state = cursors[player.uniqueId] ?: return
         val alreadyEnding = synchronized(state) {
@@ -253,6 +264,7 @@ class PointerController(
 
     /** Removes protocol state without sending packets; used once a player is disconnecting. */
     fun discard(player: Player) {
+        activeInputs.remove(player.uniqueId)
         val state = cursors.remove(player.uniqueId) ?: return
         state.camera.remove()
     }
@@ -352,6 +364,15 @@ class PointerController(
         return true
     }
 
+    private fun consumeInput(player: Player, button: PointerButton): Boolean {
+        if (player.uniqueId !in activeInputs) return false
+        if (menuInput.available(player)) return true
+        ArcScheduler.execute(plugin, player, Runnable {
+            if (player.uniqueId in activeInputs) activated(player, button, player.isSneaking)
+        })
+        return true
+    }
+
     private fun consumePosition(player: Player): Boolean = cursors.containsKey(player.uniqueId)
 
     private fun acceptSyntheticTeleport(player: Player, teleportId: Int) {
@@ -407,10 +428,13 @@ class PointerController(
 
     override fun close() {
         Bukkit.getOnlinePlayers().forEach { player ->
+            menuInput.state(player, false)
             cursors[player.uniqueId]?.let { completeEndImmediately(player, it) }
         }
         cursors.values.forEach { it.camera.remove() }
         cursors.clear()
+        activeInputs.clear()
+        menuInput.close()
         packets.close()
     }
 

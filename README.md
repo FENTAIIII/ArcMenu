@@ -9,7 +9,6 @@
 <p align="center">
   <a href="README_zh_CN.md">简体中文</a> ·
   <a href="https://github.com/FENTAIIII/ArcMenu-Editor">Visual Editor</a> ·
-  <a href="docs/第三方应用API.md">Application API</a> ·
   <a href="LICENSE">MIT License</a>
 </p>
 
@@ -53,6 +52,10 @@ These concept interfaces show the kind of experience third-party plugins can bui
 </table>
 
 The same foundation can host sign-in rewards, mail, auctions, skill trees, server settings, character selection, quest journals, matchmaking and systems that have not been designed yet. ArcMenu's job is to make those ideas share a coherent surface instead of forcing each integration to rebuild the camera, pointer, entity ownership and navigation stack.
+
+## Community 3.0.0
+
+The Community edition shares ArcMenu Editor 3.0.0 with Premium. It supports matching menu YAML, six click actions, hover/leave events, permission-denied navigation, shader-free GIF playback, project management and ArcPack export, publication, download and installation. Marketplace access requires OP. Effect projects and shader features are exclusive to Premium; Community rejects ArcPacks containing Effect content.
 
 ## What already works
 
@@ -113,7 +116,7 @@ cd ArcMenu
 mvn clean verify
 ```
 
-The shaded server plugin is written to `paper/target/ArcMenu-0.1.0-SNAPSHOT.jar`. Install it with ProtocolLib on Paper. PlaceholderAPI, Vault, PlayerPoints and CraftEngine are optional integrations; CraftEngine is the supported custom-content integration.
+The shaded server plugin is written to `paper/target/ArcMenu-3.0.0.jar`. Install it with ProtocolLib on Paper. PlaceholderAPI, Vault, PlayerPoints and CraftEngine are optional integrations; CraftEngine is the supported custom-content integration.
 
 The target range is **Paper / Minecraft Java 1.21.1–26.2**. The automated compile and test matrix covers 1.21.1, 1.21.4, 1.21.6, 1.21.11, 26.1.2 and 26.2; runtime rendering must still be accepted separately on each server version. The current editor targets **Minecraft 26.1.2 with Fabric** and requires Java 25.
 
@@ -127,4 +130,4 @@ The target range is **Paper / Minecraft Java 1.21.1–26.2**. The automated comp
 | `protocol` | Dependency-free wire contract shared with ArcMenu Editor |
 | `benchmarks` | Repeatable performance baselines |
 
-Detailed design and validation notes live in [`docs`](docs). The source is available under the [MIT License](LICENSE); third-party acknowledgements are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The source is available under the [MIT License](LICENSE); third-party acknowledgements are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

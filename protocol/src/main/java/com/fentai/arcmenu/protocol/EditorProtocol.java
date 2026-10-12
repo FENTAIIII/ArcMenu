@@ -7,11 +7,13 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.nio.charset.StandardCharsets;
 
 /** Versioned, dependency-free protocol shared by Paper and every Fabric adapter. */
 public final class EditorProtocol {
     public static final String CHANNEL = "arcmenu:editor";
-    public static final int VERSION = 8;
+    public static final int VERSION = 9;
+    public static final String EDITOR_VERSION = "3.0.0";
     public static final int MAX_PACKET_BYTES = 1_048_576;
     public static final int MAX_STRING_BYTES = 16_384;
     public static final int MAX_FRAME_DATA = 28_000;
@@ -28,6 +30,7 @@ public final class EditorProtocol {
     public static final byte KIND_REGION = 6;
     public static final byte KIND_IMAGE = 7;
     public static final byte KIND_LINE = 8;
+    public static final byte KIND_GIF = 9;
 
     public static final byte OP_MOVE = 1;
     public static final byte OP_RESIZE = 2;
@@ -85,6 +88,17 @@ public final class EditorProtocol {
     private static final byte ERROR = 66;
 
     private EditorProtocol() {}
+
+    public static boolean supportsClient(String clientVersion) {
+        return EDITOR_VERSION.equals(clientVersion) || "1.2.1".equals(clientVersion) || "1.2.0".equals(clientVersion) || "1.1.0".equals(clientVersion) || "1.0.1".equals(clientVersion) || "1.0.0".equals(clientVersion);
+    }
+
+    /** Separate from malformed packets so the server can notify old editors through vanilla chat. */
+    public static final class ProtocolMismatchException extends IllegalArgumentException {
+        public ProtocolMismatchException(int version) {
+            super("protocol mismatch: client=" + version + ", server=" + VERSION);
+        }
+    }
 
     public record WireFrame(int messageId, int index, int count, byte[] data) {
         public WireFrame {
@@ -336,7 +350,7 @@ public final class EditorProtocol {
             var in = new DataInputStream(new ByteArrayInputStream(bytes));
             if (in.readInt() != MAGIC) throw new IllegalArgumentException("invalid editor packet magic");
             int version = in.readUnsignedByte();
-            if (version != VERSION) throw new IllegalArgumentException("protocol mismatch: client=" + version + ", server=" + VERSION);
+            if (version != VERSION) throw new ProtocolMismatchException(version);
             Packet result = switch (in.readUnsignedByte()) {
                 case HELLO -> new HelloPacket(readString(in));
                 case MOVE -> new MovePacket(in.readLong(), in.readByte(), readString(in), readPointer(in),
@@ -464,7 +478,7 @@ public final class EditorProtocol {
     }
 
     private static void writeString(DataOutputStream out, String value) throws IOException {
-        var bytes = (value == null ? "" : value).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        var bytes = (value == null ? "" : value).getBytes(StandardCharsets.UTF_8);
         if (bytes.length > MAX_STRING_BYTES) throw new IllegalArgumentException("editor string too long");
         out.writeShort(bytes.length);
         out.write(bytes);
@@ -489,6 +503,6 @@ public final class EditorProtocol {
         if (length > MAX_STRING_BYTES) throw new IllegalArgumentException("editor string too long");
         byte[] bytes = in.readNBytes(length);
         if (bytes.length != length) throw new IOException("truncated editor string");
-        return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 }

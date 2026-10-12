@@ -43,7 +43,7 @@ object Transforms {
         .rotateZ(Math.toRadians(transform.rotation.z))
         .rotateX(Math.toRadians(transform.rotation.x))
         .rotateY(Math.toRadians(transform.rotation.y))
-        .scale(transform.scaleX, transform.scaleY, 1.0)
+        .scale(transform.scaleX, transform.scaleY, transform.scaleZ)
 
     fun approximatelySame(a: MenuPoint?, b: MenuPoint?, tolerance: Double = 0.01): Boolean =
         if (a == null || b == null) a == b else abs(a.x - b.x) < tolerance && abs(a.y - b.y) < tolerance

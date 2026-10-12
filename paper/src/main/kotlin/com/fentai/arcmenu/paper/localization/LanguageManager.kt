@@ -17,9 +17,9 @@ import java.util.concurrent.ConcurrentHashMap
 class LanguageManager(private val plugin: JavaPlugin) {
     private val languageDirectory = plugin.dataFolder.toPath().resolve("languages")
     private val warnedMissing = ConcurrentHashMap.newKeySet<String>()
-    private var catalogs: Map<String, Map<String, String>> = emptyMap()
-    private var defaultLocale = BUILTIN_DEFAULT
-    private var followPlayerLocale = true
+    @Volatile private var catalogs: Map<String, Map<String, String>> = emptyMap()
+    @Volatile private var defaultLocale = BUILTIN_DEFAULT
+    @Volatile private var followPlayerLocale = true
 
     fun load() {
         Files.createDirectories(languageDirectory)
@@ -82,14 +82,17 @@ class LanguageManager(private val plugin: JavaPlugin) {
     }
 
     fun text(sender: CommandSender, key: String, vararg arguments: Any?): String =
-        text(if (sender is Player && followPlayerLocale) sender.locale().toString() else defaultLocale, key, *arguments)
+        text(if (sender is Player && followPlayerLocale) sender.locale else defaultLocale, key, *arguments)
 
     fun text(player: Player, key: String, vararg arguments: Any?): String =
-        text(if (followPlayerLocale) player.locale().toString() else defaultLocale, key, *arguments)
+        text(if (followPlayerLocale) player.locale else defaultLocale, key, *arguments)
 
     fun log(key: String, vararg arguments: Any?): String = text(defaultLocale, key, *arguments)
 
-    fun locale(player: Player): String = resolveLocale(if (followPlayerLocale) player.locale().toString() else defaultLocale)
+    internal fun errorText(sender: CommandSender, error: Throwable, fallbackKey: String): String =
+        failureText(error, text(sender, fallbackKey)) { key, arguments -> text(sender, key, *arguments) }
+
+    fun locale(player: Player): String = resolveLocale(if (followPlayerLocale) player.locale else defaultLocale)
 
     internal fun text(locale: String, key: String, vararg arguments: Any?): String {
         val resolved = resolveLocale(locale)

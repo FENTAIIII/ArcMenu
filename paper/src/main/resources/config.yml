@@ -20,3 +20,11 @@ mouse:
     # Cursor images are fixed to images/mouse/mouse.png and choose.png. Size is their logical height.
     size: 5.0
     z: 5.0
+
+marketplace:
+  # HTTPS ArcPack API endpoint. Empty disables remote marketplace requests.
+  # Local development accepts http://127.0.0.1:<port>.
+  url: "https://market.myarc.icu:10051"
+  # Optional SHA-256 certificate pin for a private HTTPS endpoint without a public CA certificate.
+  # Empty uses the standard certificate authorities; hostname verification always applies.
+  certificate-sha256: ""

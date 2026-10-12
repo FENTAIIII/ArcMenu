@@ -1,17 +1,19 @@
 package com.fentai.arcmenu.core.behavior
 
-enum class ClickInput { LEFT, RIGHT, SHIFT_LEFT, SHIFT_RIGHT }
+enum class ClickInput { LEFT, RIGHT, SHIFT_LEFT, SHIFT_RIGHT, MIDDLE, SHIFT_MIDDLE }
 
 enum class ClickTrigger {
-    ALL, LEFT, RIGHT, SHIFT, SHIFT_LEFT, SHIFT_RIGHT;
+    ALL, LEFT, RIGHT, SHIFT, SHIFT_LEFT, SHIFT_RIGHT, MIDDLE, SHIFT_MIDDLE;
 
     fun matches(input: ClickInput): Boolean = when (this) {
         ALL -> true
         LEFT -> input == ClickInput.LEFT
         RIGHT -> input == ClickInput.RIGHT
-        SHIFT -> input == ClickInput.SHIFT_LEFT || input == ClickInput.SHIFT_RIGHT
+        SHIFT -> input == ClickInput.SHIFT_LEFT || input == ClickInput.SHIFT_RIGHT || input == ClickInput.SHIFT_MIDDLE
         SHIFT_LEFT -> input == ClickInput.SHIFT_LEFT
         SHIFT_RIGHT -> input == ClickInput.SHIFT_RIGHT
+        MIDDLE -> input == ClickInput.MIDDLE
+        SHIFT_MIDDLE -> input == ClickInput.SHIFT_MIDDLE
     }
 }
 
@@ -141,8 +143,8 @@ object ActionLanguage {
 
     fun parse(source: String): MenuAction {
         val raw = source.trim()
-        if (raw.isEmpty()) throw BehaviorSyntaxException("动作不能为空")
-        if (raw.startsWith('[')) throw BehaviorSyntaxException("[action] 不是 TrMenu v3 动作语法；请使用 action: value")
+        if (raw.isEmpty()) throw BehaviorSyntaxException("Action must not be empty")
+        if (raw.startsWith('[')) throw BehaviorSyntaxException("[action] is not valid TrMenu v3 action syntax; use action: value")
         val parts = raw.split(actionBoundary)
         if (parts.size > 1) {
             val parsed = parts.map(::parse)
@@ -167,7 +169,7 @@ object ActionLanguage {
             "open", "opens", "gui", "open-gui", "menu", "trmenu" -> openAction(required(name, argument))
             "open-app" -> {
                 if (!name.equals("open-app", ignoreCase = true)) {
-                    throw BehaviorSyntaxException("应用动作只支持规范写法 open-app")
+                    throw BehaviorSyntaxException("Application actions only support the canonical name open-app")
                 }
                 applicationAction(required(name, argument))
             }
@@ -215,8 +217,8 @@ object ActionLanguage {
             "close", "shut", "force-close", "silent-close", "force-shut", "silent-shut" -> noArgument(name, argument, CloseAction)
             "back" -> noArgument(name, argument, BackAction)
             "return", "break" -> noArgument(name, argument, ReturnAction)
-            "consol" -> throw BehaviorSyntaxException("不支持错误拼写 consol；请使用 console")
-            else -> throw BehaviorSyntaxException("尚未实现 TrMenu 动作: $normalized")
+            "consol" -> throw BehaviorSyntaxException("Unsupported misspelling consol; use console")
+            else -> throw BehaviorSyntaxException("TrMenu action is not implemented: $normalized")
         }
         return if (options == ActionOptions()) action else ConfiguredAction(action, options)
     }
@@ -227,7 +229,7 @@ object ActionLanguage {
         var content = source
         val delay = delayOption.find(content)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
         val chance = chanceOption.find(content)?.groupValues?.get(1)?.toDoubleOrNull() ?: 1.0
-        if (!chance.isFinite() || chance !in 0.0..1.0) throw BehaviorSyntaxException("Chance/Rate 必须介于 0 和 1")
+        if (!chance.isFinite() || chance !in 0.0..1.0) throw BehaviorSyntaxException("Chance/Rate must be between 0 and 1")
         val condition = conditionOption.find(content)?.groupValues?.get(1)?.trim()?.takeIf(String::isNotEmpty)?.let(ConditionLanguage::parse)
         val playersMatch = playersOption.find(content)
         val playersSource = playersMatch?.groupValues?.getOrNull(1)?.trim().orEmpty()
@@ -249,27 +251,27 @@ object ActionLanguage {
 
     private fun openAction(argument: String): OpenMenuAction {
         val words = quotedWords(argument)
-        val target = words.firstOrNull() ?: throw BehaviorSyntaxException("open 动作缺少菜单 ID")
+        val target = words.firstOrNull() ?: throw BehaviorSyntaxException("open action requires a menu ID")
         val split = target.split(':', limit = 2)
         if (split.getOrNull(1)?.toIntOrNull()?.let { it != 0 } == true) {
-            throw BehaviorSyntaxException("Display 菜单没有 TrMenu 容器 page；请把页面拆成独立菜单并使用 open")
+            throw BehaviorSyntaxException("Display menus do not support TrMenu container pages; split pages into separate menus and use open")
         }
         if (extensionRoute.matches(target.lowercase())) return OpenMenuAction(target.lowercase(), words.drop(1))
         val rawId = split[0]
         val dynamic = '%' in rawId || '{' in rawId
         val id = if (dynamic) rawId else rawId.lowercase().also {
-            if (!menuId.matches(it)) throw BehaviorSyntaxException("open 的菜单 ID 必须为小写字母、数字、下划线或连字符")
+            if (!menuId.matches(it)) throw BehaviorSyntaxException("open menu ID must contain only lowercase letters, digits, underscores, or hyphens")
         }
         return OpenMenuAction(id, words.drop(1), dynamic)
     }
 
     private fun applicationAction(argument: String): OpenApplicationAction {
         val words = quotedWords(argument)
-        val target = words.firstOrNull() ?: throw BehaviorSyntaxException("open-app 动作缺少应用 ID")
+        val target = words.firstOrNull() ?: throw BehaviorSyntaxException("open-app action requires an application ID")
         val dynamic = '%' in target || '{' in target
         val id = if (dynamic) target else target.lowercase().also {
             if (!extensionRoute.matches(it)) {
-                throw BehaviorSyntaxException("open-app 的应用 ID 必须为 namespace:path")
+                throw BehaviorSyntaxException("open-app application ID must use namespace:path")
             }
         }
         return OpenApplicationAction(id, words.drop(1), dynamic)
@@ -283,7 +285,7 @@ object ActionLanguage {
             if (index >= source.length) break
             if (source[index] == '`') {
                 val end = source.indexOf('`', index + 1)
-                if (end < 0) throw BehaviorSyntaxException("反引号参数未闭合")
+                if (end < 0) throw BehaviorSyntaxException("Unterminated backtick argument")
                 words += source.substring(index + 1, end).replace("\\s", " ")
                 index = end + 1
             } else {
@@ -302,10 +304,10 @@ object ActionLanguage {
     }
 
     private fun required(name: String, argument: String): String = argument.takeIf { it.isNotBlank() }
-        ?: throw BehaviorSyntaxException("$name 动作缺少参数")
+        ?: throw BehaviorSyntaxException("$name action requires an argument")
 
     private fun <T : MenuAction> noArgument(name: String, argument: String, action: T): T {
-        if (argument.isNotBlank()) throw BehaviorSyntaxException("$name 动作不接受参数")
+        if (argument.isNotBlank()) throw BehaviorSyntaxException("$name action does not accept arguments")
         return action
     }
 }
@@ -318,7 +320,7 @@ interface ConditionContext {
 object ConditionLanguage {
     fun parse(source: String): ConditionExpression {
         val raw = source.trim()
-        if (raw.isEmpty()) throw BehaviorSyntaxException("条件不能为空")
+        if (raw.isEmpty()) throw BehaviorSyntaxException("Condition must not be empty")
         return parseExpression(raw)
     }
 
@@ -347,7 +349,7 @@ object ConditionLanguage {
         for (prefix in listOf("permission ", "perm ")) {
             if (raw.startsWith(prefix, true)) {
                 val permission = raw.substring(prefix.length).trim().removePrefix("*")
-                if (permission.isBlank() || permission.any(Char::isWhitespace)) throw BehaviorSyntaxException("permission 条件缺少有效权限节点")
+                if (permission.isBlank() || permission.any(Char::isWhitespace)) throw BehaviorSyntaxException("permission condition requires a valid permission node")
                 return PermissionCondition(permission)
             }
         }
@@ -368,22 +370,22 @@ object ConditionLanguage {
             if (index > 0) {
                 val left = comparison.substring(0, index).trim()
                 val right = comparison.substring(index + token.length).trim()
-                if (left.isEmpty() || right.isEmpty()) throw BehaviorSyntaxException("比较条件两侧都必须有值")
+                if (left.isEmpty() || right.isEmpty()) throw BehaviorSyntaxException("Both sides of a comparison condition must have a value")
                 return CompareCondition(left, operator, right)
             }
         }
         if (raw.contains('%') || raw.startsWith('*') || raw.startsWith('`') || raw.startsWith('"') || raw.startsWith('\'')) {
             return TruthyCondition(raw)
         }
-        throw BehaviorSyntaxException("M2 不支持条件语法: $raw")
+        throw BehaviorSyntaxException("M2 does not support condition syntax: $raw")
     }
 
     private fun parseAggregate(source: String, name: String): List<String>? {
         if (!source.startsWith("$name ", true)) return null
         val body = source.substring(name.length).trim()
-        if (!body.startsWith('[') || !body.endsWith(']')) throw BehaviorSyntaxException("$name 条件必须使用 [ ... ]")
+        if (!body.startsWith('[') || !body.endsWith(']')) throw BehaviorSyntaxException("$name condition must use [ ... ]")
         val entries = splitDelimited(body.substring(1, body.length - 1))
-        if (entries.isEmpty()) throw BehaviorSyntaxException("$name 条件不能为空")
+        if (entries.isEmpty()) throw BehaviorSyntaxException("$name condition must not be empty")
         return entries
     }
 
@@ -423,7 +425,7 @@ object ConditionLanguage {
         }
         if (result.isEmpty()) return null
         result += source.substring(start).trim()
-        if (result.any(String::isEmpty)) throw BehaviorSyntaxException("逻辑运算符两侧都必须有条件")
+        if (result.any(String::isEmpty)) throw BehaviorSyntaxException("Both sides of a logical operator must have a condition")
         return result
     }
 

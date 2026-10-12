@@ -62,7 +62,7 @@ class MenuParserTest {
 
     @Test fun `ids are unique across frontend descendants and backend`() {
         val error = assertThrows<MenuFormatException> { parser.parse(example.replace("button:", "decoration:")) }
-        assertTrue(error.message!!.contains("重复元素 ID: decoration"))
+        assertTrue(error.message!!.contains("Duplicate element ID: decoration"))
     }
 
     @Test fun `duplicate yaml keys are rejected rather than taking last value`() {

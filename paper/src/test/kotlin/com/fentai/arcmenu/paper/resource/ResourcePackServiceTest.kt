@@ -80,16 +80,19 @@ class ResourcePackServiceTest {
     }
 
     @Test
-    fun `hot build refuses image removal to protect active glyph references`() {
-        val image = directory.resolve("images/used.png")
-        png(image, 2, 2)
+    fun `package image removal retires glyphs without reassigning active codepoints`() {
+        Files.createDirectories(directory.resolve("images"))
+        val image = BufferedImage(2, 2, BufferedImage.TYPE_INT_ARGB)
+        ImageIO.write(image, "png", directory.resolve("images/icon.png").toFile())
         val service = ResourcePackService(directory, Logger.getAnonymousLogger())
         service.rebuild()
-        Files.delete(image)
-
-        val error = assertThrows<IllegalArgumentException> { service.rebuild() }
-        assertTrue(error.message.orEmpty().contains("热构建不能删除"))
-        assertNotNull(service.resolve("/used.png"))
+        val old = service.resolve("/icon.png")!!.codepoint
+        Files.delete(directory.resolve("images/icon.png"))
+        service.rebuild()
+        assertNull(service.resolve("/icon.png"))
+        ImageIO.write(image, "png", directory.resolve("images/new.png").toFile())
+        service.rebuild()
+        assertNotEquals(old, service.resolve("/new.png")!!.codepoint)
     }
 
     @Test

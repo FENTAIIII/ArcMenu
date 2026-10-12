@@ -31,8 +31,8 @@ class SceneCompiler {
                 is RectangleNode -> add(Quad(id, matrix, node.width, node.height, node.argb))
                 is TextNode -> add(Text(id, matrix, node))
                 is ImageNode -> add(Image(id, matrix, node))
-                is ItemNode -> add(Item(id, modelMatrix(matrix, transform), node))
-                is BlockNode -> add(Block(id, modelMatrix(matrix, transform), node))
+                is ItemNode -> add(Item(id, matrix, node))
+                is BlockNode -> add(Block(id, matrix, node))
                 is FrameNode -> {
                     val t = node.thickness
                     val verticalEdge = node.height * FRAME_VERTICAL_EDGE_FACTOR
@@ -54,13 +54,6 @@ class SceneCompiler {
         }
         val root = Transforms.local(animation.rootTransform)
         nodes.forEach { visit(it, root) }
-    }
-
-    private fun modelMatrix(matrix: Matrix4dc, transform: Transform): Matrix4dc {
-        // The author-facing transform has 2D scale controls. Give 3D models a matching local depth so a
-        // square block does not collapse to a one-logical-unit slab; non-uniform models use the smaller axis.
-        val depth = min(abs(transform.scaleX), abs(transform.scaleY))
-        return Matrix4d(matrix).scale(1.0, 1.0, depth)
     }
 
     private companion object {

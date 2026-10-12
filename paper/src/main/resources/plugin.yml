@@ -9,11 +9,14 @@ softdepend: [PlaceholderAPI, Vault, PlayerPoints, CraftEngine]
 commands:
   arcmenu:
     description: Open ArcMenu menus or manage administrator previews
-    usage: /arcmenu open|close|mode|edit|animate|animations|performance|list|templates|validate|reload|resources|preview|pointer|status
+    usage: /arcmenu projects|market|download|open|close|mode|edit|animate|animations|performance|list|templates|validate|reload|resources|preview|pointer|status
 permissions:
   arcmenu.use:
     description: Open and use ArcMenu runtime menus
     default: true
   arcmenu.admin:
     description: Manage ArcMenu documents and administrator previews
+    default: op
+  arcmenu.market:
+    description: Browse the ArcMenu marketplace as an operator
     default: op

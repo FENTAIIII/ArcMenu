@@ -11,6 +11,9 @@ import org.bukkit.plugin.EventExecutor
 import org.bukkit.plugin.Plugin
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 /** Optional reflective CE boundary. ArcMenu remains loadable when CE is absent or changes binary API. */
 class CraftEngineBridge(
@@ -23,6 +26,60 @@ class CraftEngineBridge(
     private var eventRegistered = false
     private var reloadEventRegistered = false
     private val warned = mutableSetOf<String>()
+
+    private val workspaceWorker = Executors.newSingleThreadScheduledExecutor { task ->
+        Thread(task, "ArcMenu workspace resource refresh").apply { isDaemon = true }
+    }
+    private val refreshLock = Any()
+    private var workspaceGeneration = 0L
+    private var workspaceScheduled = false
+    private var closed = false
+    private val attachedPacks = AtomicLong()
+    @Volatile var workspaceRefreshPending = false
+        private set
+
+    /** The CE reload_pack workflow already owns generation, host upload and delivery scheduling. */
+    fun requestWorkspaceRefresh() {
+        synchronized(refreshLock) {
+            if (closed) return
+            workspaceGeneration++
+            workspaceRefreshPending = true
+            if (!workspaceScheduled) scheduleWorkspaceRefresh(500)
+        }
+    }
+
+    private fun scheduleWorkspaceRefresh(delayMillis: Long) {
+        workspaceScheduled = true
+        workspaceWorker.schedule(Runnable { refreshWorkspacePack() }, delayMillis, TimeUnit.MILLISECONDS)
+    }
+
+    private fun refreshWorkspacePack() {
+        val generation = synchronized(refreshLock) {
+            if (closed || !plugin.isEnabled) { workspaceScheduled = false; return }
+            workspaceGeneration
+        }
+        var busy = false
+        var success = false
+        try {
+            val craftEngine = craftEngine() ?: error("CraftEngine is unavailable; run /ce reload pack after enabling it")
+            require(eventRegistered) { "CraftEngine pack cache integration is unavailable; install a compatible CraftEngine build" }
+            val engineClass = Class.forName("net.momirealms.craftengine.bukkit.plugin.BukkitCraftEngine", true, craftEngine.javaClass.classLoader)
+            val engine = engineClass.getMethod("instance").invoke(null) ?: error("CraftEngine has not initialized")
+            val before = attachedPacks.get()
+            triggerCraftEnginePackWorkflow(engine)
+            require(attachedPacks.get() > before) { "CraftEngine reload_pack workflows did not generate a pack; configure the generate, upload and send steps" }
+            success = true
+        } catch (error: Throwable) {
+            busy = craftEngineResourcesBusy(error)
+            if (!busy) plugin.logger.warning(language.log("log.workspace-resource-pending", rootMessage(error)))
+        }
+        synchronized(refreshLock) {
+            workspaceScheduled = false
+            if (closed || !plugin.isEnabled) return
+            if (busy || workspaceGeneration != generation) scheduleWorkspaceRefresh(if (busy) 1000 else 500)
+            else if (success) workspaceRefreshPending = false
+        }
+    }
 
     fun start() {
         val craftEngine = craftEngine() ?: run {
@@ -40,7 +97,6 @@ class CraftEngineBridge(
                 EventExecutor { _, event -> attach(event) }, plugin, true,
             )
             eventRegistered = true
-            plugin.logger.info(language.log("log.craftengine-connected"))
         } catch (error: Throwable) {
             warnOnce("event", "log.craftengine-event-failed", rootMessage(error))
         }
@@ -107,6 +163,7 @@ class CraftEngineBridge(
             val externalPack = pack.toAbsolutePath().normalize()
             require(Files.isRegularFile(externalPack)) { "ArcMenu 资源包文件不存在: $externalPack" }
             val route = registerExternalPack(event, externalPack)
+            attachedPacks.incrementAndGet()
             plugin.logger.info(language.log("log.craftengine-pack-registered", externalPack, route))
         } catch (error: Throwable) {
             // This is tied to a CE rebuild operation. Report every failure so a later
@@ -129,6 +186,8 @@ class CraftEngineBridge(
     }
 
     override fun close() {
+        synchronized(refreshLock) { closed = true }
+        workspaceWorker.shutdownNow()
         if (eventRegistered || reloadEventRegistered) HandlerList.unregisterAll(listener)
         eventRegistered = false
         reloadEventRegistered = false
@@ -158,4 +217,15 @@ internal fun registerExternalPack(event: Any, externalPack: Path): String {
     } ?: throw NoSuchMethodException("CraftEngine 事件没有外部资源包注册 API")
     direct.invoke(event, externalPack)
     return "registerExternalResourcePack"
+}
+
+internal fun triggerCraftEnginePackWorkflow(engine: Any) {
+    val manager = engine.javaClass.getMethod("packManager").invoke(engine)
+    manager.javaClass.getMethod("triggerWorkflows", String::class.java).invoke(manager, "reload_pack")
+}
+
+internal fun craftEngineResourcesBusy(error: Throwable): Boolean {
+    var cause = error
+    while (cause.cause != null) cause = cause.cause!!
+    return cause.javaClass.name == "net.momirealms.craftengine.core.plugin.ResourceOperationCoordinator\$BusyException"
 }
