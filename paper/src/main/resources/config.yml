@@ -28,3 +28,8 @@ marketplace:
   # Optional SHA-256 certificate pin for a private HTTPS endpoint without a public CA certificate.
   # Empty uses the standard certificate authorities; hostname verification always applies.
   certificate-sha256: ""
+
+metrics:
+  # Anonymous bStats usage statistics for ArcMenu Community (service ID 34691).
+  # The shared plugins/bStats/config.yml opt-out also applies.
+  enabled: true

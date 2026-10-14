@@ -5,6 +5,7 @@
     <parent><groupId>com.fentai</groupId><artifactId>arcmenu-parent</artifactId><version>3.0.1</version></parent>
     <artifactId>arcmenu-paper</artifactId>
     <dependencies>
+        <dependency><groupId>org.bstats</groupId><artifactId>bstats-bukkit</artifactId><version>3.2.1</version></dependency>
         <dependency><groupId>com.fentai</groupId><artifactId>arcmenu-editor-protocol</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>com.fentai</groupId><artifactId>arcmenu-core</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>com.fentai</groupId><artifactId>arcmenu-api</artifactId><version>${project.version}</version></dependency>
@@ -26,6 +27,9 @@
                 <executions><execution><phase>package</phase><goals><goal>shade</goal></goals>
                     <configuration>
                         <createDependencyReducedPom>false</createDependencyReducedPom>
+                        <relocations>
+                            <relocation><pattern>org.bstats</pattern><shadedPattern>com.fentai.libs.arcmenu.bstats</shadedPattern></relocation>
+                        </relocations>
                         <filters><filter><artifact>*:*</artifact><excludes>
                             <exclude>META-INF/*.SF</exclude><exclude>META-INF/*.RSA</exclude><exclude>META-INF/*.DSA</exclude>
                         </excludes></filter></filters>

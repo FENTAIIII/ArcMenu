@@ -33,6 +33,7 @@ import com.fentai.arcmenu.paper.runtime.PointerButton
 import com.fentai.arcmenu.paper.runtime.RuntimeScreenSettingsLoader
 import com.fentai.arcmenu.paper.runtime.RuntimeStateStore
 import net.kyori.adventure.text.Component
+import org.bstats.bukkit.Metrics
 import org.bukkit.command.Command
 import org.bukkit.command.CommandSender
 import org.bukkit.entity.Player
@@ -53,6 +54,8 @@ import com.fentai.arcmenu.paper.util.decimal
 import com.fentai.arcmenu.paper.workspace.WorkspaceService
 import com.fentai.arcmenu.paper.workspace.MarketConfiguration
 import com.fentai.arcmenu.paper.workspace.canAccessMarket
+import com.fentai.arcmenu.paper.runtime.ConfigDefaults
+import com.fentai.arcmenu.paper.runtime.BundledMenuDefaults
 import java.nio.file.Files
 
 class ArcMenuPlugin : JavaPlugin(), Listener {
@@ -72,6 +75,7 @@ class ArcMenuPlugin : JavaPlugin(), Listener {
     private lateinit var workspace: WorkspaceService
     private lateinit var editor: EditorService
     private lateinit var language: LanguageManager
+    private var usageMetrics: Metrics? = null
     private lateinit var menuCommands: MenuCommandRegistry
     private var shortcutSettings = MenuShortcutSettings()
     private var initialCatalogPending = false
@@ -81,30 +85,14 @@ class ArcMenuPlugin : JavaPlugin(), Listener {
 
     override fun onEnable() {
         StartupBanner.show(this)
-        saveDefaultConfig()
+        ConfigDefaults.load(this)
         shortcutSettings = MenuShortcutSettingsLoader.load(this)
         language = LanguageManager(this).also(LanguageManager::load)
         menuCommands = MenuCommandRegistry(this, language) { player, menuId, arguments ->
             sessions.openRoot(player, menuId, arguments)
         }
         server.messenger.registerOutgoingPluginChannel(this, "BungeeCord")
-        Files.createDirectories(menuDirectory)
-        if (!Files.exists(menuDirectory.resolve("example.yml"))) saveResource("menus/example.yml", false)
-        if (!Files.exists(menuDirectory.resolve("details.yml"))) saveResource("menus/details.yml", false)
-        if (!Files.exists(menuDirectory.resolve("m4-resources.yml"))) saveResource("menus/m4-resources.yml", false)
-        if (!Files.exists(menuDirectory.resolve("m5-animation.yml"))) saveResource("menus/m5-animation.yml", false)
-        if (!Files.exists(animationFile)) saveResource("animations.yml", false)
-        Files.createDirectories(templateDirectory)
-        val templateDefaultsMarker = templateDirectory.resolve(".defaults-installed-v1")
-        if (!Files.exists(templateDefaultsMarker)) {
-            if (!Files.exists(templateDirectory.resolve("card.yml"))) saveResource("templates/card.yml", false)
-            Files.writeString(templateDefaultsMarker, "ArcMenu bundled templates were installed once.\n")
-        }
-        val imageDirectory = dataFolder.toPath().resolve("images")
-        Files.createDirectories(imageDirectory)
-        listOf("example.png", "example.gif", "mouse/mouse.png", "mouse/choose.png", "ce/topaz_background.png", "ce/topaz_frame.png").forEach { path ->
-            if (!Files.exists(imageDirectory.resolve(path))) saveResource("images/$path", false)
-        }
+        BundledMenuDefaults.install(this)
         val tooltipStyles = TooltipStyleLoader.load(this)
         resources = ResourcePackService(dataFolder.toPath(), logger, language)
         try {
@@ -158,13 +146,25 @@ class ArcMenuPlugin : JavaPlugin(), Listener {
             api.open(player, "details", arguments)
         })
         server.pluginManager.registerEvents(this, this)
+        configureMetrics()
         if (result.applied) {
             logger.info(language.log("log.enabled", result.count, animationResult?.tracks ?: 0,
                 resources.imageCount(), templates.count, pointer.settings.policy.displayName()))
         }
     }
 
+    private fun configureMetrics() {
+        if (!config.getBoolean("metrics.enabled", true)) {
+            usageMetrics?.shutdown()
+            usageMetrics = null
+        } else if (usageMetrics == null) {
+            usageMetrics = Metrics(this, 34691)
+        }
+    }
+
     override fun onDisable() {
+        usageMetrics?.shutdown()
+        usageMetrics = null
         if (::menuCommands.isInitialized) menuCommands.close()
         if (::workspace.isInitialized) workspace.close()
         if (::editor.isInitialized) editor.close()
@@ -276,11 +276,12 @@ class ArcMenuPlugin : JavaPlugin(), Listener {
                     return true
                 }
                 val (pointerSettings, runtimeScreenSettings, nextShortcutSettings) = try {
-                    reloadConfig()
+                    ConfigDefaults.load(this)
                     val nextPointer = PointerSettingsLoader.load(this)
                     val nextScreen = RuntimeScreenSettingsLoader.load(this)
                     val nextShortcuts = MenuShortcutSettingsLoader.load(this)
                     language.load()
+                    configureMetrics()
                     Triple(nextPointer, nextScreen, nextShortcuts)
                 } catch (error: Exception) {
                     reply(sender, "command.reload.config-invalid", error.message.orEmpty())

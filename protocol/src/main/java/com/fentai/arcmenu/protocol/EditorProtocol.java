@@ -53,6 +53,7 @@ public final class EditorProtocol {
     public static final byte OP_REORDER = 17;
     public static final byte OP_TEMPLATE_DELETE = 18;
     public static final byte OP_REPARENT = 19;
+    public static final byte OP_UNGROUP = 20;
 
     public static final byte PROPERTY_TEXT = 0;
     public static final byte PROPERTY_NUMBER = 1;
@@ -85,6 +86,7 @@ public final class EditorProtocol {
     private static final byte REORDER = 19;
     private static final byte DELETE_TEMPLATE = 20;
     private static final byte REPARENT = 21;
+    private static final byte UNGROUP = 22;
     private static final byte SNAPSHOT = 64;
     private static final byte ACK = 65;
     private static final byte ERROR = 66;
@@ -221,7 +223,7 @@ public final class EditorProtocol {
 
     public sealed interface Packet permits HelloPacket, MovePacket, ResizePacket, SwitchTabPacket,
             UndoPacket, RedoPacket, SavePacket, ApplyPacket, ClosePacket, ProbePacket, CreatePacket,
-            DeletePacket, DeleteManyPacket, DuplicatePacket, GroupPacket, ReorderPacket, ReparentPacket,
+            DeletePacket, DeleteManyPacket, DuplicatePacket, GroupPacket, UngroupPacket, ReorderPacket, ReparentPacket,
             SetPropertyPacket, SaveTemplatePacket, InstantiateTemplatePacket, DeleteTemplatePacket,
             SnapshotPacket, AckPacket, ErrorPacket {}
 
@@ -267,6 +269,7 @@ public final class EditorProtocol {
     public record GroupPacket(long revision, List<String> nodeIds) implements Packet {
         public GroupPacket { nodeIds = List.copyOf(nodeIds); }
     }
+    public record UngroupPacket(long revision, String nodeId) implements Packet {}
     /** Reorders nodes inside their existing parent and inserts them immediately before beforeId, or at the end when blank. */
     public record ReorderPacket(long revision, byte tab, List<String> nodeIds, String beforeId) implements Packet {
         public ReorderPacket { nodeIds = List.copyOf(nodeIds); }
@@ -376,6 +379,9 @@ public final class EditorProtocol {
                 case GroupPacket value -> {
                     out.writeByte(GROUP); out.writeLong(value.revision()); writeStrings(out, value.nodeIds());
                 }
+                case UngroupPacket value -> {
+                    out.writeByte(UNGROUP); out.writeLong(value.revision()); writeString(out, value.nodeId());
+                }
                 case ReorderPacket value -> {
                     out.writeByte(REORDER); out.writeLong(value.revision()); out.writeByte(value.tab());
                     writeStrings(out, value.nodeIds()); writeString(out, value.beforeId());
@@ -448,6 +454,7 @@ public final class EditorProtocol {
                 case DELETE_MANY -> new DeleteManyPacket(in.readLong(), in.readByte(), readStrings(in));
                 case DUPLICATE -> new DuplicatePacket(in.readLong(), in.readByte(), readStrings(in), readString(in), in.readBoolean());
                 case GROUP -> new GroupPacket(in.readLong(), readStrings(in));
+                case UNGROUP -> new UngroupPacket(in.readLong(), readString(in));
                 case REORDER -> new ReorderPacket(in.readLong(), in.readByte(), readStrings(in), readString(in));
                 case REPARENT -> new ReparentPacket(in.readLong(), readStrings(in), readString(in), readString(in));
                 case SET_PROPERTY -> new SetPropertyPacket(in.readLong(), in.readByte(), readString(in), readString(in), readString(in),

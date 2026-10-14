@@ -283,6 +283,9 @@ class EditorService(
                 ack(player, draft, EditorProtocol.OP_GROUP,
                     draft.geometry(id, EditorProtocol.TAB_FRONTEND), null, text(player, "editor.grouped", packet.nodeIds().size, id))
             }
+            is EditorProtocol.UngroupPacket -> {
+                throw IllegalArgumentException(text(player, "editor.backend-no-group"))
+            }
             is EditorProtocol.ReorderPacket -> {
                 require(packet.tab() == draft.activeTab) { wrongTab(player, "editor.operation-reorder") }
                 draft.reorder(packet.revision(), packet.tab(), packet.nodeIds(), packet.beforeId())

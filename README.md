@@ -131,3 +131,9 @@ The target range is **Paper / Minecraft Java 1.21.1–26.2**. The automated comp
 | `benchmarks` | Repeatable performance baselines |
 
 The source is available under the [MIT License](LICENSE); third-party acknowledgements are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+### Animation differences
+
+Community supports menu transitions and offset, rotation, scale, text content and text opacity tracks. Premium also provides continuous RGB `color` tracks for rectangles, frames and lines, including hover/leave color feedback. Community rejects `property: color`; it retains shader-free GIF playback and does not include Effect or shader playback.
+
+Anonymous usage reporting uses bStats service ID **34691** for Community; Premium uses **34690**. Set `metrics.enabled: false` to opt out. The shared bStats opt-out is also respected.
