@@ -8,6 +8,7 @@ import com.fentai.arcmenu.core.geometry.HitTester
 import com.fentai.arcmenu.core.geometry.MenuPlane
 import com.fentai.arcmenu.core.geometry.Transforms
 import com.fentai.arcmenu.core.model.*
+import com.fentai.arcmenu.paper.input.ArcitxAnvilService
 import com.fentai.arcmenu.paper.input.PointerController
 import com.fentai.arcmenu.paper.input.PointerMode
 import com.fentai.arcmenu.paper.input.networkCameraAngle
@@ -15,6 +16,7 @@ import com.fentai.arcmenu.paper.localization.LanguageManager
 import com.fentai.arcmenu.paper.api.ExtensionRoutes
 import com.fentai.arcmenu.paper.api.ApplicationRegistry
 import com.fentai.arcmenu.paper.api.RegisteredApplication
+import com.fentai.arcmenu.paper.render.ArcitxText
 import com.fentai.arcmenu.paper.render.BukkitMenuRenderer
 import com.fentai.arcmenu.paper.render.MenuViewMode
 import com.fentai.arcmenu.paper.render.TooltipStyles
@@ -77,7 +79,12 @@ class MenuSessions(
         var lastRegion: InteractionRegion? = null,
         var cursorChoosing: Boolean = false,
         val hover: MenuHoverState = MenuHoverState(),
-    )
+        val arcitxBuffers: Map<String, ArcitxBuffer> = emptyMap(),
+        var editingArcitx: String? = null,
+        var editingSince: Long = 0,
+    ) {
+        val editingBuffer: ArcitxBuffer? get() = editingArcitx?.let(arcitxBuffers::get)
+    }
 
     private data class Placement(val plane: MenuPlane, val worldId: UUID, val openedAt: Vec3)
     private data class CatcherInput(val owner: Session, val catcher: CatcherAction, val stage: Int)
@@ -255,6 +262,7 @@ class MenuSessions(
     }
 
     private val executor = ActionExecutor(plugin, placeholders, state, language)
+    private val arcitx = ArcitxAnvilService(plugin, ::updateArcitx, ::finishArcitx)
     private val sessions = mutableMapOf<UUID, Session>()
     private val applicationSessions = mutableMapOf<UUID, HostedApplication>()
     private val history = mutableMapOf<UUID, ArrayDeque<Route>>()
@@ -290,6 +298,7 @@ class MenuSessions(
 
 
     fun contains(player: Player) = sessions.containsKey(player.uniqueId) || applicationSessions.containsKey(player.uniqueId)
+    fun isArcitxEditing(player: Player) = sessions[player.uniqueId]?.editingArcitx != null
     fun isRuntime(player: Player) = sessions[player.uniqueId]?.mode == MenuViewMode.RUNTIME || applicationSessions.containsKey(player.uniqueId)
 
     fun activeApplication(player: Player): String? = applicationSessions[player.uniqueId]?.registration?.id
@@ -583,6 +592,7 @@ class MenuSessions(
             return mode
         }
         val session = sessions[player.uniqueId]?.takeIf { it.mode == MenuViewMode.RUNTIME && !it.closing } ?: return null
+        closeArcitx(session)
         val requested = pointer.mode(player)
         if (requested != session.pointerMode) {
             pointer.end(player)
@@ -618,6 +628,7 @@ class MenuSessions(
         }
         val session = sessions[player.uniqueId]?.takeIf { it.mode == MenuViewMode.RUNTIME } ?: return
         if (!player.isOnline || player.isDead) return
+        closeArcitx(session)
         val nextPlane = plane(
             player,
             session.menu.canvas.forRuntimeScreen(runtimeScreen.forMode(session.pointerMode)),
@@ -633,6 +644,7 @@ class MenuSessions(
                 tooltipStyle = tooltipStyles.forMouse(session.pointerMode == PointerMode.MOUSE),
                 cursorStyle = cursorStyle,
                 initialAnimation = session.lastAnimation,
+                textOverrides = arcitxTexts(player, session.arcitxBuffers),
             )
             nextView = createdView
             val createdCapture = capture(player, nextPlane)
@@ -640,6 +652,7 @@ class MenuSessions(
             if (session.pointerMode == PointerMode.MOUSE) {
                 if (pointer.isMouseActive(player)) pointer.reanchor(player, nextPlane) else pointer.begin(player, nextPlane)
             } else pointer.end(player)
+            createdView.refreshDepthEye()
 
             val previousView = session.view
             val previousCapture = session.capture
@@ -684,6 +697,7 @@ class MenuSessions(
             if (runtime.pointerMode == PointerMode.MOUSE) {
                 if (pointer.isMouseActive(player)) pointer.reanchor(player, nextPlane) else pointer.begin(player, nextPlane)
             } else pointer.end(player)
+            createdOverlay.refreshDepthEye()
 
             val previousOverlay = runtime.overlay
             val previousCapture = runtime.capture
@@ -734,14 +748,20 @@ class MenuSessions(
     override fun refresh(player: Player, target: String?) {
         val session = sessions[player.uniqueId]?.takeIf { it.mode == MenuViewMode.RUNTIME } ?: return
         if (target == null) {
-            session.textNodes.forEach { (id, node) -> session.view.updateText(id, placeholders.expand(player, node.content)) }
+            session.textNodes.forEach { (id, node) ->
+                val buffer = session.arcitxBuffers.values.firstOrNull { it.spec.textId == id }
+                if (buffer != null) refreshArcitxText(session, buffer)
+                else session.view.updateText(id, placeholders.expand(player, node.content))
+            }
             session.imageNodes.forEach { (id, node) -> session.view.updateImage(id, placeholders.expand(player, node.source)) }
             refreshTooltip(session, force = true)
             return
         }
         val node = session.textNodes[target]
         if (node != null) {
-            session.view.updateText(target, placeholders.expand(player, node.content))
+            val buffer = session.arcitxBuffers.values.firstOrNull { it.spec.textId == target }
+            if (buffer != null) refreshArcitxText(session, buffer)
+            else session.view.updateText(target, placeholders.expand(player, node.content))
             return
         }
         val image = session.imageNodes[target]
@@ -836,6 +856,7 @@ class MenuSessions(
             return
         }
         val session = sessions[player.uniqueId] ?: return
+        if (session.editingArcitx != null) return
         if (!acceptsActivation(session.pointerMode, button)) return
         if (session.pointerMode == PointerMode.MOUSE && !pointer.isReady(player)) return
         val now = System.nanoTime()
@@ -857,7 +878,99 @@ class MenuSessions(
             executor.runActions(region.deny, player, this)
             return
         }
+        val buffer = session.arcitxBuffers[region.id]
+        if (buffer != null) {
+            openArcitx(session, region.id, buffer)
+            if (sessions[player.uniqueId] === session && session.editingArcitx == region.id)
+                executor.runOrdered(region.actions.matching(input), player, this)
+            return
+        }
+        session.arcitxBuffers.entries.firstOrNull { it.value.spec.submitId == region.id }?.let { (id, inputBuffer) ->
+            val value = inputBuffer.commit() ?: return
+            arcitxOperation(session) {
+                state.set(player, StateScope.META, "input", value)
+                state.set(player, StateScope.META, "input-$id", value)
+                refreshArcitxText(session, inputBuffer)
+            }
+            if (sessions[player.uniqueId] !== session) return
+        }
         executor.runOrdered(region.actions.matching(input), player, this)
+    }
+
+    private fun arcitxBuffers(player: Player, menu: MenuDefinition, mode: MenuViewMode): Map<String, ArcitxBuffer> =
+        if (mode != MenuViewMode.RUNTIME) emptyMap() else menu.backend.mapNotNull { region ->
+            region.arcitx?.let { spec ->
+                region.id to ArcitxBuffer(spec.copy(initial = placeholders.expand(player, spec.initial)))
+            }
+        }.toMap()
+
+    private fun arcitxTexts(player: Player, buffers: Map<String, ArcitxBuffer>): Map<String, Component> =
+        buffers.values.associate { buffer ->
+            buffer.spec.textId to ArcitxText.render(buffer, true) { placeholders.expand(player, it) }
+        }
+
+    private fun openArcitx(session: Session, id: String, buffer: ArcitxBuffer) = arcitxOperation(session) {
+        cancelInput(session.player)
+        session.editingArcitx = id
+        session.editingSince = session.ticks
+        val initial = buffer.openEditor()
+        pointer.suspendSampling(session.player, true)
+        session.view.hideTooltip()
+        session.view.configureCursor(null)
+        refreshArcitxText(session, buffer)
+        if (!arcitx.open(session.player, placeholders.expand(session.player, buffer.spec.title), initial,
+                buffer.spec.maxLength)) {
+            finishArcitx(session.player)
+            message(session.player, "runtime.arcitx-open-failed")
+        }
+    }
+
+    private fun updateArcitx(player: Player, value: String) {
+        val session = sessions[player.uniqueId] ?: return
+        val buffer = session.editingBuffer ?: return
+        arcitxOperation(session) {
+            if (buffer.update(value)) refreshArcitxText(session, buffer)
+        }
+    }
+
+    private fun finishArcitx(player: Player) {
+        val session = sessions[player.uniqueId] ?: return
+        arcitxOperation(session) { closeArcitx(session) }
+    }
+
+    private fun arcitxOperation(session: Session, operation: () -> Unit) {
+        try {
+            operation()
+        } catch (error: NumericExpressionException) {
+            failSessionTick(session, error)
+        }
+    }
+
+    private fun closeArcitx(session: Session) {
+        val id = session.editingArcitx ?: return
+        session.editingArcitx = null
+        try {
+            arcitx.close(session.player, notify = false)
+        } finally {
+            pointer.suspendSampling(session.player, false)
+            session.arcitxBuffers[id]?.closeEditor()
+        }
+        if (sessions[session.player.uniqueId] === session && !session.closing && session.view.valid) {
+            session.arcitxBuffers[id]?.let { refreshArcitxText(session, it) }
+            session.view.configureCursor(pointer.settings.cursorStyle.takeIf { session.pointerMode == PointerMode.MOUSE })
+            session.cursorChoosing = false
+            session.lastRegion = null
+            session.lastPoint?.let { point ->
+                if (session.pointerMode == PointerMode.MOUSE) session.view.updateCursor(point, pointer.settings.cursorStyle)
+            }
+        }
+    }
+
+    private fun refreshArcitxText(session: Session, buffer: ArcitxBuffer) {
+        val visible = ((session.ticks - session.editingSince) / buffer.spec.caret.interval) % 2 == 0L
+        session.view.updateTextOverride(buffer.spec.textId, ArcitxText.render(buffer, visible) {
+            placeholders.expand(session.player, it)
+        })
     }
 
     /** Returns true when ArcMenu owns the hotbar change and the Bukkit event must be cancelled. */
@@ -907,6 +1020,7 @@ class MenuSessions(
             AnimationTimeline(it, nodeTransforms(menu.frontend), transitionKind)
         } else null
         val initialAnimation = timeline?.initial() ?: TimelineTick(AnimationSnapshot(), false)
+        val arcitxBuffers = arcitxBuffers(player, menu, mode)
         val cursorStyle = pointer.settings.cursorStyle.takeIf {
             mode == MenuViewMode.RUNTIME && intendedPointerMode == PointerMode.MOUSE
         }
@@ -919,6 +1033,7 @@ class MenuSessions(
                 tooltipStyle = if (mode == MenuViewMode.RUNTIME) tooltipStyles.forMouse(intendedPointerMode == PointerMode.MOUSE) else null,
                 cursorStyle = cursorStyle,
                 initialAnimation = initialAnimation.snapshot,
+                textOverrides = arcitxTexts(player, arcitxBuffers),
             )
             view = createdView
             val createdCapture = capture(player, plane)
@@ -927,11 +1042,13 @@ class MenuSessions(
             // animation snapshot remains frozen until PointerController receives the
             // client's acknowledgement of the ordered activation packets.
             val pointerMode = if (mode == MenuViewMode.RUNTIME) pointer.begin(player, plane) else pointer.beginEditor(player, plane)
+            createdView.refreshDepthEye()
             val session = Session(
                 player, menu, plane, mode, createdView, HitTester(menu.backend), placement?.worldId ?: player.world.uid,
                 placement?.openedAt ?: vec(player.location.toVector()), createdCapture,
                 textNodes(menu.frontend), imageNodes(menu.frontend),
                 timeline, pointerMode, initialAnimation.snapshot, initialAnimation.transitionActive,
+                arcitxBuffers = arcitxBuffers,
             )
             sessions[player.uniqueId] = session
             ensureTicker()
@@ -969,6 +1086,7 @@ class MenuSessions(
             )
             capture = capture(player, applicationPlane)
             activeMode = pointer.begin(player, applicationPlane)
+            overlay.refreshDepthEye()
             val runtime = HostedApplication(
                 registration,
                 player,
@@ -1042,93 +1160,126 @@ class MenuSessions(
 
     private fun tickSessions() {
         for (session in sessions.values.toList()) {
-            val player = session.player
-            if (!player.isOnline) {
-                closeImmediately(player, true)
-                continue
+            try {
+                tickSession(session)
+            } catch (error: NumericExpressionException) {
+                failSessionTick(session, error)
             }
-            session.ticks++
-            if (session.mode == MenuViewMode.RUNTIME) {
-                if (player.isDead) continue
-                val cameraInvalid = session.pointerMode == PointerMode.MOUSE && !pointer.hasValidCamera(player)
-                if (player.world.uid != session.worldId || !session.view.valid || !session.capture.isValid || cameraInvalid) {
-                    if (session.ticks % REPAIR_INTERVAL_TICKS == 0L) reanchorRuntime(player)
-                    continue
-                }
-            } else {
-                val delta = vec(player.location.toVector()) - session.openedAt
-                val cameraInvalid = session.pointerMode == PointerMode.MOUSE && !pointer.hasValidCamera(player)
-                if (!player.hasPermission("arcmenu.admin") || player.world.uid != session.worldId ||
-                    delta.dot(delta) > 25.0 || !session.view.valid || !session.capture.isValid || cameraInvalid) {
-                    closeImmediately(player, true)
-                    continue
-                }
-            }
-            val cameraReady = session.pointerMode != PointerMode.MOUSE || pointer.isReady(player)
-            if (!cameraReady) {
-                session.view.hideTooltip()
-                continue
-            }
-            session.view.tickGifImages()
-            val timelineTick = session.timeline?.advance()
-            if (timelineTick != null) {
-                if (timelineTick.exitFinished) {
-                    removeSession(player, runCloseEvent = false)
-                    continue
-                }
-                applyAnimation(session, timelineTick)
-            }
-            // Runtime mouse mode samples hidden yaw/pitch.  In the editor the
-            // native cursor belongs to EditorScreen, so polling rotation would
-            // create a second, unrelated cursor coordinate stream.
-            if (session.mode == MenuViewMode.RUNTIME && session.pointerMode == PointerMode.MOUSE) pointer.poll(player)
-            val point = if (session.mode == MenuViewMode.RUNTIME) pointer.sample(player, session.plane) else null
-            val region = session.hitTester.hit(point)
-            val pointerChanged = !Transforms.approximatelySame(point, session.lastPoint)
-            val regionChanged = region?.id != session.lastRegion?.id
-            val cursorChoosing = session.mode == MenuViewMode.RUNTIME && !session.transitionActive && !session.closing && region != null
-            if (point != null && session.pointerMode == PointerMode.MOUSE &&
-                (pointerChanged || cursorChoosing != session.cursorChoosing)) {
-                session.view.updateCursor(point, pointer.settings.cursorStyle, cursorChoosing)
-            }
-            session.cursorChoosing = cursorChoosing
-            when (session.mode) {
-                MenuViewMode.BACKEND_PREVIEW -> {
-                    session.view.select(region?.id)
-                    if (!Transforms.approximatelySame(point, session.lastPoint) || region?.id != session.lastRegion?.id) {
-                        player.sendActionBar(Component.text(describe(player, point, region?.id)))
-                    }
-                }
-                MenuViewMode.RUNTIME -> {
-                    if (session.transitionActive || session.closing) {
-                        session.view.hideTooltip()
-                        session.lastPoint = point
-                        session.lastRegion = region
-                        continue
-                    }
-                    if (session.hover.changed(region) && !session.hover.update(region,
-                            isActive = { sessions[player.uniqueId] === session && !session.closing },
-                            accepts = { target -> target.condition?.let { executor.evaluate(it, player) } ?: true },
-                            execute = { reactions -> executor.run(reactions, player, this) })) continue
-                    for ((id, node) in session.textNodes) {
-                        if (node.updateTicks > 0 && session.ticks % node.updateTicks == 0L &&
-                            session.timeline?.owns(id, TrackProperty.CONTENT) != true) {
-                            session.view.updateText(id, placeholders.expand(player, node.content))
-                        }
-                    }
-                    for ((id, node) in session.imageNodes) {
-                        if (node.updateTicks > 0 && session.ticks % node.updateTicks == 0L) {
-                            session.view.updateImage(id, placeholders.expand(player, node.source))
-                        }
-                    }
-                    val intervalDue = region?.tooltipUpdateTicks?.let { it > 0 && session.ticks % it == 0L } == true
-                    if (pointerChanged || regionChanged || intervalDue) refreshTooltip(session, point, region, force = intervalDue)
-                }
-                MenuViewMode.FRONTEND_PREVIEW -> Unit
-            }
-            session.lastPoint = point
-            session.lastRegion = region
         }
+    }
+
+    private fun tickSession(session: Session) {
+        val player = session.player
+        if (!player.isOnline) {
+            closeImmediately(player, true)
+            return
+        }
+        session.ticks++
+        if (session.mode == MenuViewMode.RUNTIME) {
+            if (player.isDead) return
+            val cameraInvalid = session.pointerMode == PointerMode.MOUSE && !pointer.hasValidCamera(player)
+            if (player.world.uid != session.worldId || !session.view.valid || !session.capture.isValid || cameraInvalid) {
+                if (session.ticks % REPAIR_INTERVAL_TICKS == 0L) reanchorRuntime(player)
+                return
+            }
+        } else {
+            val delta = vec(player.location.toVector()) - session.openedAt
+            val cameraInvalid = session.pointerMode == PointerMode.MOUSE && !pointer.hasValidCamera(player)
+            if (!player.hasPermission("arcmenu.admin") || player.world.uid != session.worldId ||
+                delta.dot(delta) > 25.0 || !session.view.valid || !session.capture.isValid || cameraInvalid) {
+                closeImmediately(player, true)
+                return
+            }
+        }
+        val cameraReady = session.pointerMode != PointerMode.MOUSE || pointer.isReady(player)
+        if (!cameraReady) {
+            session.view.hideTooltip()
+            return
+        }
+        session.view.refreshDepthEye()
+        session.view.tickGifImages()
+        val timelineTick = session.timeline?.advance()
+        if (timelineTick != null) {
+            if (timelineTick.exitFinished) {
+                removeSession(player, runCloseEvent = false)
+                return
+            }
+            applyAnimation(session, timelineTick)
+        }
+        val editing = session.editingBuffer
+        if (editing != null) {
+            if ((session.ticks - session.editingSince) % editing.spec.caret.interval == 0L)
+                refreshArcitxText(session, editing)
+            session.view.hideTooltip()
+            return
+        }
+        // Runtime mouse mode samples hidden yaw/pitch.  In the editor the
+        // native cursor belongs to EditorScreen, so polling rotation would
+        // create a second, unrelated cursor coordinate stream.
+        if (session.mode == MenuViewMode.RUNTIME && session.pointerMode == PointerMode.MOUSE) pointer.poll(player)
+        val point = if (session.mode == MenuViewMode.RUNTIME) pointer.sample(player, session.plane) else null
+        val region = session.hitTester.hit(point)
+        val pointerChanged = !Transforms.approximatelySame(point, session.lastPoint)
+        val regionChanged = region?.id != session.lastRegion?.id
+        val cursorChoosing = session.mode == MenuViewMode.RUNTIME && !session.transitionActive && !session.closing && region != null
+        if (point != null && session.pointerMode == PointerMode.MOUSE &&
+            (pointerChanged || cursorChoosing != session.cursorChoosing)) {
+            session.view.updateCursor(point, pointer.settings.cursorStyle, cursorChoosing)
+        }
+        session.cursorChoosing = cursorChoosing
+        when (session.mode) {
+            MenuViewMode.BACKEND_PREVIEW -> {
+                session.view.select(region?.id)
+                if (!Transforms.approximatelySame(point, session.lastPoint) || region?.id != session.lastRegion?.id) {
+                    player.sendActionBar(Component.text(describe(player, point, region?.id)))
+                }
+            }
+            MenuViewMode.RUNTIME -> {
+                if (session.transitionActive || session.closing) {
+                    session.view.hideTooltip()
+                    session.lastPoint = point
+                    session.lastRegion = region
+                    return
+                }
+                if (session.hover.changed(region) && !session.hover.update(region,
+                        isActive = { sessions[player.uniqueId] === session && !session.closing },
+                        accepts = { target -> target.condition?.let { executor.evaluate(it, player) } ?: true },
+                        execute = { reactions -> executor.run(reactions, player, this) })) return
+                for ((id, node) in session.textNodes) {
+                    if (node.updateTicks > 0 && session.ticks % node.updateTicks == 0L &&
+                        session.timeline?.owns(id, TrackProperty.CONTENT) != true) {
+                        val buffer = session.arcitxBuffers.values.firstOrNull { it.spec.textId == id }
+                        if (buffer != null) refreshArcitxText(session, buffer)
+                        else session.view.updateText(id, placeholders.expand(player, node.content))
+                    }
+                }
+                for ((id, node) in session.imageNodes) {
+                    if (node.updateTicks > 0 && session.ticks % node.updateTicks == 0L) {
+                        session.view.updateImage(id, placeholders.expand(player, node.source))
+                    }
+                }
+                val intervalDue = region?.tooltipUpdateTicks?.let { it > 0 && session.ticks % it == 0L } == true
+                if (pointerChanged || regionChanged || intervalDue) refreshTooltip(session, point, region, force = intervalDue)
+            }
+            MenuViewMode.FRONTEND_PREVIEW -> Unit
+        }
+        session.lastPoint = point
+        session.lastRegion = region
+    }
+
+    private fun failSessionTick(session: Session, error: Exception) {
+        if (sessions[session.player.uniqueId] !== session) return
+        plugin.logger.warning(language.log(
+            "log.menu-tick-failed",
+            session.menu.id,
+            session.player.name,
+            error.message.orEmpty(),
+        ))
+        runCatching { removeSession(session.player, runCloseEvent = false) }
+        history.remove(session.player.uniqueId)
+        state.clearArguments(session.player)
+        lastActivation.remove(session.player.uniqueId)
+        if (session.player.isOnline) runCatching { message(session.player, "runtime.menu-failed", session.menu.id) }
     }
 
     private fun tickApplications() {
@@ -1151,6 +1302,7 @@ class MenuSessions(
                 continue
             }
             if (runtime.pointerMode == PointerMode.MOUSE && !pointer.isReady(player)) continue
+            runtime.overlay.refreshDepthEye()
             if (runtime.pointerMode == PointerMode.MOUSE) pointer.poll(player)
             val point = pointer.sample(player, runtime.plane)
             val previous = runtime.lastPoint
@@ -1186,6 +1338,7 @@ class MenuSessions(
 
     private fun removeSession(player: Player, runCloseEvent: Boolean, preservePointer: Boolean = false): ActionResult {
         val removed = sessions.remove(player.uniqueId) ?: return ActionResult.CONTINUE
+        closeArcitx(removed)
         cancelInput(player)
         if (removed.pointerMode == PointerMode.MOUSE && !preservePointer) pointer.end(player)
         removed.capture.remove()
@@ -1327,6 +1480,7 @@ class MenuSessions(
     }
 
     private fun cancelInput(player: Player) {
+        sessions[player.uniqueId]?.let(::closeArcitx)
         catcherInputs.remove(player.uniqueId)
         awaitingChats.remove(player.uniqueId)
         retypeRequests.remove(player.uniqueId)
@@ -1339,12 +1493,13 @@ class MenuSessions(
         session.lastAnimation = tick.snapshot
     }
 
-    override fun close() {
+    fun closeMenus() {
         applicationSessions.values.toList().forEach { runtime ->
             removeApplication(runtime.player, ArcMenuApplicationCloseReason.PLUGIN_DISABLE)
         }
         sessions.values.toList().forEach { session ->
             sessions.remove(session.player.uniqueId)
+            closeArcitx(session)
             if (session.pointerMode == PointerMode.MOUSE) pointer.end(session.player)
             session.capture.remove()
             session.view.close()
@@ -1360,6 +1515,11 @@ class MenuSessions(
         retypeRequests.clear()
         ticker?.cancel()
         ticker = null
+    }
+
+    override fun close() {
+        closeMenus()
+        arcitx.close()
     }
 
     private fun capture(player: Player, plane: MenuPlane): Interaction {
@@ -1401,6 +1561,7 @@ class MenuSessions(
         return MenuPlane(
             vec(origin),
             vec(right), vec(up), vec(normal), canvas,
+            vec(eye.toVector()),
         )
     }
 

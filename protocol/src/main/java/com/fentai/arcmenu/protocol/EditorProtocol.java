@@ -7,15 +7,17 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 import java.nio.charset.StandardCharsets;
 
 /** Versioned, dependency-free protocol shared by Paper and every Fabric adapter. */
 public final class EditorProtocol {
     public static final String CHANNEL = "arcmenu:editor";
-    public static final int VERSION = 9;
-    public static final String EDITOR_VERSION = "3.0.0";
+    public static final int VERSION = 10;
+    public static final String EDITOR_VERSION = "3.0.1";
     public static final int MAX_PACKET_BYTES = 1_048_576;
-    public static final int MAX_STRING_BYTES = 16_384;
+    public static final int MAX_STRING_BYTES = 262_144;
     public static final int MAX_FRAME_DATA = 28_000;
 
     public static final byte TAB_FRONTEND = 0;
@@ -90,7 +92,7 @@ public final class EditorProtocol {
     private EditorProtocol() {}
 
     public static boolean supportsClient(String clientVersion) {
-        return EDITOR_VERSION.equals(clientVersion) || "1.2.1".equals(clientVersion) || "1.2.0".equals(clientVersion) || "1.1.0".equals(clientVersion) || "1.0.1".equals(clientVersion) || "1.0.0".equals(clientVersion);
+        return EDITOR_VERSION.equals(clientVersion) || "3.0.0".equals(clientVersion) || "1.2.1".equals(clientVersion) || "1.2.0".equals(clientVersion) || "1.1.0".equals(clientVersion) || "1.0.1".equals(clientVersion) || "1.0.0".equals(clientVersion);
     }
 
     /** Separate from malformed packets so the server can notify old editors through vanilla chat. */
@@ -98,6 +100,27 @@ public final class EditorProtocol {
         public ProtocolMismatchException(int version) {
             super("protocol mismatch: client=" + version + ", server=" + VERSION);
         }
+    }
+
+    public static final class StringLimitException extends IllegalArgumentException {
+        private final String field;
+        private final int byteCount;
+        public StringLimitException(String field, int byteCount) {
+            super("Editor field " + field + " is " + byteCount + " UTF-8 bytes; maximum is " + MAX_STRING_BYTES + " bytes");
+            this.field = field;
+            this.byteCount = byteCount;
+        }
+        public String field() { return field; }
+        public int byteCount() { return byteCount; }
+    }
+
+    public static final class PacketLimitException extends IllegalArgumentException {
+        private final int byteCount;
+        public PacketLimitException(int byteCount) {
+            super("Editor packet is " + byteCount + " bytes; maximum is " + MAX_PACKET_BYTES + " bytes");
+            this.byteCount = byteCount;
+        }
+        public int byteCount() { return byteCount; }
     }
 
     public record WireFrame(int messageId, int index, int count, byte[] data) {
@@ -112,7 +135,7 @@ public final class EditorProtocol {
 
     /** Splits a logical response below the conservative Bukkit plugin-message payload ceiling. */
     public static List<byte[]> frame(int messageId, byte[] packet) {
-        if (packet.length > MAX_PACKET_BYTES) throw new IllegalArgumentException("editor packet too large");
+        if (packet.length > MAX_PACKET_BYTES) throw new PacketLimitException(packet.length);
         int count = Math.max(1, (packet.length + MAX_FRAME_DATA - 1) / MAX_FRAME_DATA);
         if (count > 256) throw new IllegalArgumentException("too many editor frames");
         var result = new ArrayList<byte[]>(count);
@@ -133,11 +156,67 @@ public final class EditorProtocol {
     public static WireFrame decodeFrame(byte[] bytes) {
         try {
             var in = new DataInputStream(new ByteArrayInputStream(bytes));
-            if (in.readInt() != FRAME_MAGIC || in.readUnsignedByte() != VERSION) throw new IllegalArgumentException("invalid editor frame header");
+            if (in.readInt() != FRAME_MAGIC) throw new IllegalArgumentException("invalid editor frame header");
+            int version = in.readUnsignedByte();
+            if (version != VERSION) throw new ProtocolMismatchException(version);
             int messageId = in.readInt(); int index = in.readUnsignedShort(); int count = in.readUnsignedShort(); int length = in.readUnsignedShort();
             if (length > MAX_FRAME_DATA || length != in.available()) throw new IllegalArgumentException("invalid editor frame length");
             return new WireFrame(messageId, index, count, in.readNBytes(length));
         } catch (IOException error) { throw new IllegalArgumentException("truncated editor frame", error); }
+    }
+
+    public static boolean isFrame(byte[] bytes) {
+        return bytes != null && bytes.length >= 4 &&
+                (bytes[0] & 255) == (FRAME_MAGIC >>> 24) && (bytes[1] & 255) == (FRAME_MAGIC >>> 16 & 255) &&
+                (bytes[2] & 255) == (FRAME_MAGIC >>> 8 & 255) && (bytes[3] & 255) == (FRAME_MAGIC & 255);
+    }
+
+    /** Bounded assembly is shared by client responses and large client property edits. */
+    public static final class FrameAssembler {
+        private static final long MAX_AGE_NANOS = 10_000_000_000L;
+        private final Map<Integer, Pending> pending = new HashMap<>();
+
+        public byte[] accept(byte[] bytes) {
+            WireFrame frame = decodeFrame(bytes);
+            long now = System.nanoTime();
+            pending.values().removeIf(value -> now - value.startedAt > MAX_AGE_NANOS);
+            Pending value = pending.get(frame.messageId());
+            if (value == null) {
+                if (pending.size() >= 4) throw new IllegalArgumentException("Too many incomplete editor messages");
+                value = new Pending(frame.count(), now);
+                pending.put(frame.messageId(), value);
+            }
+            if (value.parts.length != frame.count()) {
+                pending.remove(frame.messageId());
+                throw new IllegalArgumentException("Editor frame count changed mid-message");
+            }
+            if (value.parts[frame.index()] == null) {
+                value.parts[frame.index()] = frame.data();
+                value.received++;
+                value.size += value.parts[frame.index()].length;
+            }
+            if (value.size > MAX_PACKET_BYTES) {
+                pending.remove(frame.messageId());
+                throw new PacketLimitException(value.size);
+            }
+            if (value.received != value.parts.length) return null;
+            pending.remove(frame.messageId());
+            var output = new ByteArrayOutputStream(value.size);
+            for (byte[] part : value.parts) output.writeBytes(part);
+            return output.toByteArray();
+        }
+
+        public void clear() { pending.clear(); }
+
+        private static final class Pending {
+            private final byte[][] parts;
+            private final long startedAt;
+            private int received, size;
+            private Pending(int count, long startedAt) {
+                this.parts = new byte[count][];
+                this.startedAt = startedAt;
+            }
+        }
     }
 
     public sealed interface Packet permits HelloPacket, MovePacket, ResizePacket, SwitchTabPacket,
@@ -282,7 +361,7 @@ public final class EditorProtocol {
                 }
                 case CreatePacket value -> {
                     out.writeByte(CREATE); out.writeLong(value.revision()); out.writeByte(value.tab());
-                    out.writeByte(value.kind()); writeString(out, value.parentId()); writeString(out, value.initialSource());
+                    out.writeByte(value.kind()); writeString(out, value.parentId()); writeString(out, value.initialSource(), "initial-source");
                 }
                 case DeletePacket value -> {
                     out.writeByte(DELETE); out.writeLong(value.revision()); out.writeByte(value.tab()); writeString(out, value.nodeId());
@@ -308,7 +387,8 @@ public final class EditorProtocol {
                 }
                 case SetPropertyPacket value -> {
                     out.writeByte(SET_PROPERTY); out.writeLong(value.revision()); out.writeByte(value.tab());
-                    writeString(out, value.nodeId()); writeString(out, value.key()); writeString(out, value.value());
+                    writeString(out, value.nodeId()); writeString(out, value.key());
+                    writeString(out, value.value(), nodePath(value.tab(), value.nodeId()) + "." + value.key());
                     out.writeLong(value.gestureId()); out.writeBoolean(value.finalUpdate());
                 }
                 case SaveTemplatePacket value -> {
@@ -324,7 +404,7 @@ public final class EditorProtocol {
                     out.writeByte(SNAPSHOT); out.writeLong(value.revision()); writeString(out, value.menuId());
                     out.writeDouble(value.canvasWidth()); out.writeDouble(value.canvasHeight());
                     out.writeBoolean(value.dirty()); out.writeBoolean(value.saved()); writeString(out, value.serverVersion());
-                    writeNodes(out, value.frontend()); writeNodes(out, value.backend());
+                    writeNodes(out, value.frontend(), TAB_FRONTEND); writeNodes(out, value.backend(), TAB_BACKEND);
                     writeImages(out, value.images()); writeTemplates(out, value.templates());
                 }
                 case AckPacket value -> {
@@ -337,7 +417,7 @@ public final class EditorProtocol {
                 case ErrorPacket value -> { out.writeByte(ERROR); out.writeLong(value.revision()); writeString(out, value.message()); }
             }
             out.flush();
-            if (bytes.size() > MAX_PACKET_BYTES) throw new IllegalArgumentException("editor packet exceeds " + MAX_PACKET_BYTES + " bytes");
+            if (bytes.size() > MAX_PACKET_BYTES) throw new PacketLimitException(bytes.size());
             return bytes.toByteArray();
         } catch (IOException impossible) {
             throw new IllegalStateException(impossible);
@@ -402,14 +482,14 @@ public final class EditorProtocol {
                 in.readDouble(), in.readDouble(), in.readDouble(), in.readDouble());
     }
 
-    private static void writeNodes(DataOutputStream out, List<NodeSnapshot> nodes) throws IOException {
+    private static void writeNodes(DataOutputStream out, List<NodeSnapshot> nodes, byte tab) throws IOException {
         if (nodes.size() > 10_000) throw new IllegalArgumentException("too many editor nodes");
         out.writeInt(nodes.size());
         for (var node : nodes) {
             writeString(out, node.id()); writeString(out, node.parentId()); out.writeByte(node.kind());
             out.writeDouble(node.x()); out.writeDouble(node.y()); out.writeDouble(node.width()); out.writeDouble(node.height());
             out.writeDouble(node.rotationZ()); out.writeBoolean(node.visible()); out.writeBoolean(node.locked());
-            writeProperties(out, node.properties());
+            writeProperties(out, node.properties(), nodePath(tab, node.id()));
         }
     }
 
@@ -423,11 +503,16 @@ public final class EditorProtocol {
         return result;
     }
 
-    private static void writeProperties(DataOutputStream out, List<PropertySnapshot> properties) throws IOException {
+    private static String nodePath(byte tab, String id) {
+        return (tab == TAB_BACKEND ? "backend." : "frontend.") + id;
+    }
+
+    private static void writeProperties(DataOutputStream out, List<PropertySnapshot> properties, String nodePath) throws IOException {
         if (properties.size() > 256) throw new IllegalArgumentException("too many editor properties");
         out.writeShort(properties.size());
         for (var property : properties) {
-            writeString(out, property.key()); out.writeByte(property.type()); writeString(out, property.value());
+            writeString(out, property.key()); out.writeByte(property.type());
+            writeString(out, property.value(), nodePath + "." + property.key());
             if (property.choices().size() > 256) throw new IllegalArgumentException("too many editor property choices");
             out.writeShort(property.choices().size());
             for (String choice : property.choices()) writeString(out, choice);
@@ -478,9 +563,13 @@ public final class EditorProtocol {
     }
 
     private static void writeString(DataOutputStream out, String value) throws IOException {
+        writeString(out, value, "string");
+    }
+
+    private static void writeString(DataOutputStream out, String value, String field) throws IOException {
         var bytes = (value == null ? "" : value).getBytes(StandardCharsets.UTF_8);
-        if (bytes.length > MAX_STRING_BYTES) throw new IllegalArgumentException("editor string too long");
-        out.writeShort(bytes.length);
+        if (bytes.length > MAX_STRING_BYTES) throw new StringLimitException(field, bytes.length);
+        out.writeInt(bytes.length);
         out.write(bytes);
     }
 
@@ -499,8 +588,9 @@ public final class EditorProtocol {
     }
 
     private static String readString(DataInputStream in) throws IOException {
-        int length = in.readUnsignedShort();
-        if (length > MAX_STRING_BYTES) throw new IllegalArgumentException("editor string too long");
+        int length = in.readInt();
+        if (length < 0) throw new IllegalArgumentException("invalid editor string byte length: " + length);
+        if (length > MAX_STRING_BYTES) throw new StringLimitException("incoming string", length);
         byte[] bytes = in.readNBytes(length);
         if (bytes.length != length) throw new IOException("truncated editor string");
         return new String(bytes, StandardCharsets.UTF_8);

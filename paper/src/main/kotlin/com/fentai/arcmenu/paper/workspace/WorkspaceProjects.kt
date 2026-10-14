@@ -21,6 +21,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 import java.util.UUID
+import java.util.Locale
 import javax.imageio.ImageIO
 
 data class WorkspaceSelection(val type: String, val id: String)
@@ -83,6 +84,7 @@ internal class WorkspaceProjects(
             val scene = document.definition; val c = scene.canvas
             add(linkedMapOf("type" to "menu", "id" to scene.id, "path" to document.sourceName.replace('\\', '/'),
                 "width" to c.width, "height" to c.height, "pixelsPerBlock" to c.pixelsPerBlock, "distance" to c.distance,
+                "depthMode" to c.depthMode.name.lowercase(Locale.ROOT),
                 "permission" to scene.permission, "mainMenu" to scene.mainMenu, "openCommands" to scene.openCommands,
                 "editing" to busy(WorkspaceSelection("menu", scene.id))))
         }
@@ -91,6 +93,7 @@ internal class WorkspaceProjects(
             fun count(node: VisualNode): Int = 1 + if (node is GroupNode) node.children.sumOf(::count) else 0
             add(linkedMapOf("type" to "template", "id" to template.id, "path" to template.sourceName.replace('\\', '/'),
                 "width" to canvas.width, "height" to canvas.height, "pixelsPerBlock" to canvas.pixelsPerBlock, "distance" to canvas.distance,
+                "depthMode" to canvas.depthMode.name.lowercase(Locale.ROOT),
                 "rootId" to template.root.properties.id, "nodeCount" to count(template.root), "previewOnly" to true, "editing" to false))
         }
     }.sortedWith(compareBy({ it["type"].toString() }, { it["path"].toString() }))
@@ -113,10 +116,18 @@ internal class WorkspaceProjects(
         return selected
     }
 
-    private fun canvas(args: JsonObject): Map<String, Double> = linkedMapOf(
-        "width" to args.number("width", 320.0), "height" to args.number("height", 180.0),
-        "pixels-per-block" to args.number("pixelsPerBlock", 100.0), "distance" to args.number("distance", 3.0),
-    ).also { values -> localizedRequire(values.values.all { it.isFinite() && it > 0 && it <= 100_000 }, "workspace.canvas-invalid", "Canvas settings must be positive finite values below 100000") }
+    private fun canvas(args: JsonObject): Map<String, Any> {
+        val geometry = linkedMapOf(
+            "width" to args.number("width", 320.0), "height" to args.number("height", 180.0),
+            "pixels-per-block" to args.number("pixelsPerBlock", 100.0), "distance" to args.number("distance", 3.0),
+        )
+        localizedRequire(geometry.values.all { it.isFinite() && it > 0 && it <= 100_000 },
+            "workspace.canvas-invalid", "Canvas settings must be positive finite values below 100000")
+        val depthMode = args.string("depthMode", "perspective")
+        localizedRequire(depthMode in setOf("perspective", "layered"), "workspace.canvas-depth-mode-invalid",
+            "Canvas depth mode must be perspective or layered")
+        return linkedMapOf<String, Any>().apply { putAll(geometry); put("depth-mode", depthMode) }
+    }
 
     fun configure(args: JsonObject) {
         val selection = WorkspaceSelection(args.required("type"), args.required("id")); validateSelection(selection)
@@ -129,7 +140,8 @@ internal class WorkspaceProjects(
         @Suppress("UNCHECKED_CAST") val scene = strictYaml().load<MutableMap<String, Any>>(original)
         val settings = JsonObject().apply {
             addProperty("width", c.width); addProperty("height", c.height); addProperty("pixelsPerBlock", c.pixelsPerBlock); addProperty("distance", c.distance)
-            listOf("width", "height", "pixelsPerBlock", "distance").filter(args::has).forEach { add(it, args.get(it)) }
+            addProperty("depthMode", c.depthMode.name.lowercase(Locale.ROOT))
+            listOf("width", "height", "pixelsPerBlock", "distance", "depthMode").filter(args::has).forEach { add(it, args.get(it)) }
         }
         scene["canvas"] = canvas(settings)
         if (args.has("permission") && selection.type == "menu") scene["permission"] = args.required("permission")

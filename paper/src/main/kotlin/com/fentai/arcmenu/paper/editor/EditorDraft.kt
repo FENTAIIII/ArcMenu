@@ -295,10 +295,20 @@ internal class EditorDraft(
         templates: List<EditorProtocol.TemplateSnapshot> = emptyList(),
         preview: MenuDefinition = definition,
         schema: EditorProtocol.SnapshotPacket? = null,
+    ): EditorProtocol.SnapshotPacket = snapshotState(currentState.source, definition, serverVersion, images, templates, preview, schema)
+
+    private fun snapshotState(
+        source: String,
+        definition: MenuDefinition,
+        serverVersion: String = "",
+        images: List<EditorProtocol.ImageSnapshot> = emptyList(),
+        templates: List<EditorProtocol.TemplateSnapshot> = emptyList(),
+        preview: MenuDefinition = definition,
+        schema: EditorProtocol.SnapshotPacket? = null,
     ): EditorProtocol.SnapshotPacket {
         val schemaIndex = schema?.frontend()?.associateBy { it.id() }
-        val propertyIndex = if (schema == null) YamlDocumentEditor.propertyIndex(currentState.source) else emptyMap()
-        val typeIndex = if (schema == null) YamlDocumentEditor.typeIndex(currentState.source) else emptyMap()
+        val propertyIndex = if (schema == null) YamlDocumentEditor.propertyIndex(source) else emptyMap()
+        val typeIndex = if (schema == null) YamlDocumentEditor.typeIndex(source) else emptyMap()
         val frontend = mutableListOf<EditorProtocol.NodeSnapshot>()
         fun visit(nodes: List<VisualNode>, parentId: String, parent: Matrix4dc) {
             nodes.forEach { node ->
@@ -354,6 +364,7 @@ internal class EditorDraft(
         val nextDefinition = parseSaved(completed)
         if (expectedDefinition != null) localizedRequire(nextDefinition == expectedDefinition, "editor.transaction-invalid", "YAML changes do not match the editor transaction")
         validate(nextDefinition)
+        EditorProtocol.encode(snapshotState(completed, nextDefinition))
         if (gestureKey == null || gestureKey != activeGestureKey) {
             undo.addLast(currentState)
             while (undo.size > 100) undo.removeFirst()
@@ -523,6 +534,23 @@ internal object YamlDocumentEditor {
     data class EditResult(val source: String, val id: String)
     data class MultiEditResult(val source: String, val ids: List<String>, val copies: Map<String, String>)
     private data class Ref(val container: MutableMap<String, Any?>, val id: String, val node: MutableMap<String, Any?>)
+    private data class ArcitxProperty(val key: String, val path: String, val type: Byte, val default: Any)
+
+    private val arcitxDefaults = ArcitxInput("", "")
+    private val arcitxProperties = listOf(
+        ArcitxProperty("arcitx-text", "text", EditorProtocol.PROPERTY_TEXT, ""),
+        ArcitxProperty("arcitx-submit", "submit", EditorProtocol.PROPERTY_TEXT, ""),
+        ArcitxProperty("arcitx-title", "title", EditorProtocol.PROPERTY_TEXT, arcitxDefaults.title),
+        ArcitxProperty("arcitx-initial", "initial", EditorProtocol.PROPERTY_TEXT, arcitxDefaults.initial),
+        ArcitxProperty("arcitx-max-length", "max-length", EditorProtocol.PROPERTY_INTEGER, arcitxDefaults.maxLength),
+        ArcitxProperty("arcitx-mask", "mask", EditorProtocol.PROPERTY_TEXT, arcitxDefaults.mask),
+        ArcitxProperty("arcitx-display-before", "display.before", EditorProtocol.PROPERTY_TEXT, arcitxDefaults.display.before),
+        ArcitxProperty("arcitx-display-editing", "display.editing", EditorProtocol.PROPERTY_TEXT, arcitxDefaults.display.editing),
+        ArcitxProperty("arcitx-display-draft", "display.draft", EditorProtocol.PROPERTY_TEXT, arcitxDefaults.display.draft),
+        ArcitxProperty("arcitx-display-complete", "display.complete", EditorProtocol.PROPERTY_TEXT, arcitxDefaults.display.complete),
+        ArcitxProperty("arcitx-caret-content", "caret.content", EditorProtocol.PROPERTY_TEXT, arcitxDefaults.caret.content),
+        ArcitxProperty("arcitx-caret-interval", "caret.interval", EditorProtocol.PROPERTY_INTEGER, arcitxDefaults.caret.interval),
+    )
 
     private val loaderOptions = LoaderOptions().apply { isAllowDuplicateKeys = false }
     private val dumpOptions = DumperOptions().apply {
@@ -602,6 +630,8 @@ internal object YamlDocumentEditor {
         val copies = linkedMapOf<String, String>()
         roots.forEach { sourceId ->
             val sourceRef = find(root, tab, sourceId) ?: throw localizedArgumentFailure("editor.any-element-missing", "Element does not exist: $sourceId", sourceId)
+            localizedRequire(tab != EditorProtocol.TAB_BACKEND || !isArcitx(sourceRef.node),
+                "editor.arcitx-duplicate-unsupported", "Arcitx editors cannot be duplicated with shared text and submit bindings; create an independently bound editor")
             val nextId = unique(sourceId, allIds)
             allIds += nextId
             copies[sourceId] = nextId
@@ -786,22 +816,35 @@ internal object YamlDocumentEditor {
         if (key == "id") {
             localizedRequire(value.isNotBlank() && value.none { it.isISOControl() || it == '/' || it == '\\' }, "editor.element-id-invalid", "Element ID must be nonempty and must not contain control characters or path separators")
             localizedRequire(value == id || value !in allIds(root), "editor.element-key-exists", "Element key already exists: $value", value)
-            if (value != id) renameKey(ref.container, id, value)
+            if (value != id) {
+                renameKey(ref.container, id, value)
+                val binding = if (tab == EditorProtocol.TAB_FRONTEND) "text" else "submit"
+                backend(root).values.forEach { raw ->
+                    @Suppress("UNCHECKED_CAST")
+                    val region = raw as? MutableMap<String, Any?> ?: return@forEach
+                    if (isArcitx(region) && region[binding] == id) region[binding] = value
+                }
+            }
             return dump(root)
         }
         val property = propertiesForMap(tab, ref.id, ref.node).firstOrNull { it.key() == key }
             ?: throw localizedArgumentFailure("editor.property-not-supported", "$id does not support property $key", id, key)
+        if (tab == EditorProtocol.TAB_BACKEND && key == "type") {
+            changeBackendType(root, ref, value)
+            return dump(root)
+        }
         val parsed = parseValue(property.type(), key,
             if (ref.node["type"] in setOf("image", "gif") && key == "color") value.removePrefix("&") else value)
-        val segments = key.split('.')
-        if (segments.size == 2 && segments[0] in setOf("offset", "rotation", "scale")) {
+        val path = if (tab == EditorProtocol.TAB_BACKEND) arcitxProperties.firstOrNull { it.key == key }?.path ?: key else key
+        val segments = path.split('.')
+        if (segments.size == 2 && segments[0] in setOf("offset", "rotation", "scale", "display", "caret")) {
             val nested = map(ref.node, segments[0], true)
             nested[segments[1]] = parsed
         } else if (parsed === RemoveValue) {
-            ref.node.remove(key)
+            ref.node.remove(path)
         } else {
             if (key == "source") listOf("path", "image", "material").forEach(ref.node::remove)
-            ref.node[key] = parsed
+            ref.node[path] = parsed
         }
         return dump(root)
     }
@@ -911,6 +954,13 @@ internal object YamlDocumentEditor {
                 "block" -> add(prop("block-data", EditorProtocol.PROPERTY_TEXT, node["block-data"] ?: "minecraft:stone"))
             }
         } else {
+            add(EditorProtocol.PropertySnapshot("type", EditorProtocol.PROPERTY_CHOICE,
+                if (isArcitx(node)) "Arcitx" else "region", listOf("region", "Arcitx")))
+            if (isArcitx(node)) arcitxProperties.forEach { property ->
+                val path = property.path.split('.')
+                val value = if (path.size == 2) nested(node, path[0], path[1], property.default) else node[path[0]] ?: property.default
+                add(prop(property.key, property.type, value))
+            }
             add(prop("x", EditorProtocol.PROPERTY_NUMBER, node["x"] ?: 0))
             add(prop("y", EditorProtocol.PROPERTY_NUMBER, node["y"] ?: 0))
             add(prop("width", EditorProtocol.PROPERTY_NUMBER, node["width"] ?: 1))
@@ -989,9 +1039,44 @@ internal object YamlDocumentEditor {
             EditorProtocol.KIND_REGION -> "region"
             else -> throw localizedArgumentFailure("editor.element-type-invalid", "Unknown element type: $kind", kind)
         }
-        localizedRequire(node["type"] == expectedType, "editor.initial-type-invalid", "Initial element type must match $expectedType", expectedType)
-        if (kind == EditorProtocol.KIND_REGION) node.remove("type")
+        val arcitx = kind == EditorProtocol.KIND_REGION && isArcitx(node)
+        localizedRequire(node["type"] == expectedType || arcitx, "editor.initial-type-invalid", "Initial element type must match $expectedType", expectedType)
+        if (kind == EditorProtocol.KIND_REGION && !arcitx) node.remove("type")
         return node
+    }
+
+    private fun isArcitx(node: Map<String, Any?>): Boolean = node["type"]?.toString()?.equals("Arcitx", true) == true
+
+    private fun changeBackendType(root: MutableMap<String, Any?>, ref: Ref, value: String) {
+        localizedRequire(value == "region" || value.equals("Arcitx", true), "editor.backend-type-invalid", "Backend type must be region or Arcitx")
+        if (value == "region") {
+            ref.node.remove("type")
+            arcitxProperties.map { it.path.substringBefore('.') }.distinct().forEach(ref.node::remove)
+            return
+        }
+        if (isArcitx(ref.node)) {
+            ref.node["type"] = "Arcitx"
+            return
+        }
+        val existing = backend(root).values.filterIsInstance<Map<*, *>>().filter { it["type"]?.toString()?.equals("Arcitx", true) == true }
+        val text = parentIndex(root).keys.firstOrNull { id ->
+            findFrontend(root, id)?.node?.get("type") == "text" && existing.none { it["text"] == id }
+        }
+        fun region(id: String, node: Map<String, Any?>) = InteractionRegion(id,
+            numeric(node["x"] ?: 0, "x"), numeric(node["y"] ?: 0, "y"),
+            numeric(node["width"] ?: 1, "width"), numeric(node["height"] ?: 1, "height"))
+        val edit = region(ref.id, ref.node)
+        val submit = backend(root).entries.firstOrNull { (id, raw) ->
+            @Suppress("UNCHECKED_CAST") val node = raw as? MutableMap<String, Any?> ?: return@firstOrNull false
+            val actions = node["actions"]
+            id != ref.id && !isArcitx(node) && existing.none { it["submit"] == id } &&
+                (actions == null || actions is List<*> && actions.isEmpty()) && !edit.overlaps(region(id, node))
+        }?.key
+        localizedRequire(text != null && submit != null && existing.none { it["submit"] == ref.id },
+            "editor.arcitx-bindings-unavailable", "Arcitx requires an unbound text node and a separate unbound submit region with no actions")
+        ref.node["type"] = "Arcitx"
+        ref.node["text"] = text
+        ref.node["submit"] = submit
     }
 
     private fun defaultNode(kind: Byte, initialSource: String): MutableMap<String, Any?> = when (kind) {

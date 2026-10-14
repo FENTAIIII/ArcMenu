@@ -35,12 +35,19 @@ class MenuParser {
         }
         if (openCommands.distinct().size != openCommands.size) root.fail("open-commands", "Must not contain duplicate commands")
         val canvas = root.obj("canvas")
-        canvas.only("width", "height", "pixels-per-block", "distance")
+        canvas.only("width", "height", "pixels-per-block", "distance", "depth-mode")
+        val depthMode = when (canvas.string("depth-mode", "perspective")) {
+            "perspective" -> CanvasDepthMode.PERSPECTIVE
+            "layered" -> CanvasDepthMode.LAYERED
+            else -> canvas.fail("depth-mode", "Must be perspective or layered")
+        }
         val definitionCanvas = Canvas(
             canvas.positive("width", 320.0), canvas.positive("height", 180.0),
             canvas.positive("pixels-per-block", 100.0), canvas.positive("distance", 3.0),
+            depthMode,
         )
         val ids = mutableSetOf<String>()
+        val textIds = mutableSetOf<String>()
         lateinit var structuredAction: (Map<*, *>, ObjectReader, String) -> MenuAction
         fun update(reader: ObjectReader, key: String = "update"): Int {
             val interval = reader.int(key, -1)
@@ -211,6 +218,7 @@ class MenuParser {
                     FrameNode(properties, width, height, thickness, reader.color())
                 }
                 "text" -> {
+                    textIds += key
                     reader.only(*common, "content", "size", "font", "opacity", "line-width", "alignment", "update")
                     val font = reader.string("font", "minecraft:default")
                     if (!Regex("[a-z0-9_.-]+:[a-z0-9_./-]+").matches(font)) reader.fail("font", "Must use namespace:path")
@@ -259,9 +267,41 @@ class MenuParser {
             }
         }
         val frontend = root.obj("frontend").entries().map { (id, reader) -> visual(id, reader) }
-        val backend = root.obj("backend").entries().map { (key, reader) ->
+        fun arcitx(reader: ObjectReader): ArcitxInput {
+            val maxLength = reader.int("max-length", 50)
+            if (maxLength !in 1..50) reader.fail("max-length", "Must be between 1 and 50 UTF-16 units, matching the native anvil input")
+            val initial = reader.string("initial", "")
+            if (initial.length > maxLength) reader.fail("initial", "Must not exceed max-length")
+            val mask = reader.string("mask", "")
+            if (mask.isNotEmpty() && mask.codePointCount(0, mask.length) != 1) reader.fail("mask", "Must be empty or one Unicode code point")
+            val display = reader.obj("display")
+            display.only("before", "editing", "draft", "complete")
+            val caret = reader.obj("caret")
+            caret.only("content", "interval")
+            val interval = caret.int("interval", 10)
+            if (interval < 1) caret.fail("interval", "Must be a positive tick interval")
+            return ArcitxInput(
+                textId = reader.string("text"), submitId = reader.string("submit"),
+                title = reader.string("title", "Enter text"), initial = initial, maxLength = maxLength, mask = mask,
+                display = ArcitxDisplay(
+                    display.string("before", "&7Click to enter text"), display.string("editing", "{input}{caret}"),
+                    display.string("draft", "{input}"), display.string("complete", "{input}"),
+                ),
+                caret = ArcitxCaret(caret.string("content", "_"), interval),
+            )
+        }
+        val backendReaders = root.obj("backend").entries()
+        val backend = backendReaders.map { (key, reader) ->
             register(key, reader)
-            reader.only("x", "y", "width", "height", "priority", "tooltip", "update", "actions", "condition", "deny", "on-hover", "on-leave")
+            val common = arrayOf("x", "y", "width", "height", "priority", "tooltip", "update", "actions", "condition", "deny", "on-hover", "on-leave")
+            val input = if (reader.has("type")) {
+                if (!reader.string("type").equals("Arcitx", true)) reader.fail("type", "The only supported backend type is Arcitx; omit type for a normal click region")
+                reader.only(*common, "type", "text", "submit", "title", "initial", "max-length", "mask", "display", "caret")
+                arcitx(reader)
+            } else {
+                reader.only(*common)
+                null
+            }
             InteractionRegion(
                 id = key, x = reader.number("x", 0.0), y = reader.number("y", 0.0),
                 width = reader.positive("width"), height = reader.positive("height"),
@@ -272,7 +312,25 @@ class MenuParser {
                 deny = actionList(reader.raw("deny"), reader, "deny"),
                 onHover = reactions(reader.raw("on-hover"), reader, "on-hover"),
                 onLeave = reactions(reader.raw("on-leave"), reader, "on-leave"),
+                arcitx = input,
             )
+        }
+        val readersById = backendReaders.toMap()
+        val regionsById = backend.associateBy { it.id }
+        val boundText = mutableSetOf<String>()
+        val boundSubmit = mutableSetOf<String>()
+        for (region in backend) {
+            val input = region.arcitx ?: continue
+            val reader = readersById.getValue(region.id)
+            if (input.textId !in textIds) reader.fail("text", "Must reference a frontend text node, including text nodes inside groups")
+            if (!boundText.add(input.textId)) reader.fail("text", "Must not share a text node with another Arcitx input")
+            if (input.submitId == region.id) reader.fail("submit", "Edit and submit regions must have different IDs")
+            val submit = regionsById[input.submitId] ?: reader.fail("submit", "Must reference an existing backend click region")
+            if (submit.arcitx != null) reader.fail("submit", "Must reference a normal click region, not another Arcitx editor")
+            if (!boundSubmit.add(input.submitId)) reader.fail("submit", "Must not share a submit region with another Arcitx input")
+            if (region.overlaps(submit)) {
+                reader.fail("submit", "Edit and submit hit rectangles must be strictly separate without overlapping or touching edges")
+            }
         }
         val eventReader = root.obj("events")
         eventReader.only("open", "close")

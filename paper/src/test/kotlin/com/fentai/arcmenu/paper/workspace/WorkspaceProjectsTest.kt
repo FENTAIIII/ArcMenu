@@ -61,6 +61,21 @@ class WorkspaceProjectsTest {
         assertThrows(IllegalArgumentException::class.java) { store.configure(args("""{"type":"menu","id":"a","width":640}""")) }
         assertThrows(IllegalArgumentException::class.java) { store.delete(listOf(WorkspaceSelection("menu", "a"))) }
     }
+    @Test fun `canvas depth mode survives project settings changes and rejects unsupported values`() {
+        val store = store()
+        store.create(args("""{"type":"menu","id":"layers","depthMode":"layered"}"""))
+        assertEquals("layered", store.list().single { it["id"] == "layers" }["depthMode"])
+        store.configure(args("""{"type":"menu","id":"layers","width":640}"""))
+        val file = root.resolve("menus/layers.yml")
+        assertTrue(Files.readString(file).contains("depth-mode: layered"))
+        val previous = Files.readString(file)
+        assertThrows(IllegalArgumentException::class.java) {
+            store.configure(args("""{"type":"menu","id":"layers","depthMode":"invalid"}"""))
+        }
+        assertEquals(previous, Files.readString(file))
+        store.configure(args("""{"type":"menu","id":"layers","depthMode":"perspective"}"""))
+        assertEquals("perspective", store.list().single { it["id"] == "layers" }["depthMode"])
+    }
     @Test fun `project validation selects player language while preserving English diagnostics`() {
         val store = store()
         store.create(args("""{"type":"menu","id":"shop"}"""))

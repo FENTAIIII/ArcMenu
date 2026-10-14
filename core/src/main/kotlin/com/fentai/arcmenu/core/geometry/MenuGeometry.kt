@@ -2,12 +2,16 @@ package com.fentai.arcmenu.core.geometry
 
 import com.fentai.arcmenu.core.model.*
 import org.joml.Matrix4d
+import org.joml.Matrix4dc
 import kotlin.math.abs
 
 data class Ray(val origin: Vec3, val direction: Vec3)
 
 /** Orthonormal world-space axes; normal faces the viewer. Output uses logical canvas units. */
-data class MenuPlane(val origin: Vec3, val right: Vec3, val up: Vec3, val normal: Vec3, val canvas: Canvas) {
+data class MenuPlane @JvmOverloads constructor(
+    val origin: Vec3, val right: Vec3, val up: Vec3, val normal: Vec3, val canvas: Canvas,
+    val viewerEye: Vec3? = null,
+) {
     /** Reuses the first-open world anchor and axes while adopting the next menu's logical canvas. */
     fun withCanvas(nextCanvas: Canvas) = copy(canvas = nextCanvas)
 
@@ -29,6 +33,31 @@ data class MenuPlane(val origin: Vec3, val right: Vec3, val up: Vec3, val normal
         normal.x, normal.y, normal.z, 0.0,
         origin.x, origin.y, origin.z, 1.0,
     ).scale(1.0 / canvas.pixelsPerBlock)
+
+    /**
+     * Correct planar layers about the actual eye while retaining their native depth. Models use
+     * anchor-relative world matrices, including group and animation transforms. Tilted surfaces and
+     * three-dimensional meshes keep their internal perspective; the correction uses their origin.
+     */
+    fun displayMatrix(model: Matrix4dc, eye: Vec3): Matrix4dc {
+        if (canvas.depthMode != CanvasDepthMode.LAYERED) return model
+        val relativeEye = eye - origin
+        val distance = relativeEye.dot(normal)
+        if (!distance.isFinite() || distance <= 1e-9) return model
+        val depth = Vec3(model.m30(), model.m31(), model.m32()).dot(normal)
+        val factor = 1.0 - depth / distance
+        val correction = 1.0 - factor
+        val lateralEye = relativeEye - normal * distance
+        val x = normal.x
+        val y = normal.y
+        val z = normal.z
+        return Matrix4d(
+            factor + correction * x * x, correction * y * x, correction * z * x, 0.0,
+            correction * x * y, factor + correction * y * y, correction * z * y, 0.0,
+            correction * x * z, correction * y * z, factor + correction * z * z, 0.0,
+            lateralEye.x * correction, lateralEye.y * correction, lateralEye.z * correction, 1.0,
+        ).mul(model)
+    }
 }
 
 /** Priority, then document order. Frontend visibility/depth/transforms do not participate. */

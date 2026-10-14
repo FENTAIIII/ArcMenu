@@ -113,9 +113,10 @@ class PointerController(
     )
 
     private val activeInputs = ConcurrentHashMap.newKeySet<UUID>()
+    private val suspendedInputs = ConcurrentHashMap.newKeySet<UUID>()
     private val touch = TouchPointer()
     private val cursors = ConcurrentHashMap<UUID, CursorState>()
-    private val menuInput = MenuInputBridge(plugin, { it.uniqueId in activeInputs }, activated)
+    private val menuInput = MenuInputBridge(plugin, { it.uniqueId in activeInputs && it.uniqueId !in suspendedInputs }, activated)
     private val preferenceKey = NamespacedKey(plugin, "pointer-mode")
     private val packets = ProtocolPointerBridge(plugin, ::consumeRotation, ::consumePosition, ::acceptSyntheticTeleport, ::consumeInput, { it.uniqueId in activeInputs })
     @Volatile var settings: PointerSettings = initialSettings
@@ -124,6 +125,16 @@ class PointerController(
     fun updateSettings(next: PointerSettings) {
         settings = next
     }
+
+    /** Retain the existing camera while the native anvil owns keyboard and pointer input. */
+    fun suspendSampling(player: Player, suspended: Boolean) {
+        if (suspended) suspendedInputs.add(player.uniqueId) else suspendedInputs.remove(player.uniqueId)
+        menuInput.state(player, !suspended && player.uniqueId in activeInputs)
+    }
+
+    internal fun fixedCameraEye(player: Player): Vec3? = cursors[player.uniqueId]?.camera
+        ?.takeIf { it.isValid && it.world == player.world }
+        ?.location?.let { Vec3(it.x, it.y, it.z) }
 
     fun begin(player: Player, plane: MenuPlane): PointerMode {
         return begin(player, plane, mode(player))
@@ -230,6 +241,7 @@ class PointerController(
 
     fun end(player: Player) {
         activeInputs.remove(player.uniqueId)
+        suspendedInputs.remove(player.uniqueId)
         menuInput.state(player, false)
         check(Bukkit.isPrimaryThread()) { "摄像机实体只能在服务端主线程移除" }
         val state = cursors[player.uniqueId] ?: return
@@ -265,6 +277,7 @@ class PointerController(
     /** Removes protocol state without sending packets; used once a player is disconnecting. */
     fun discard(player: Player) {
         activeInputs.remove(player.uniqueId)
+        suspendedInputs.remove(player.uniqueId)
         val state = cursors.remove(player.uniqueId) ?: return
         state.camera.remove()
     }
@@ -333,13 +346,18 @@ class PointerController(
     }
 
     fun poll(player: Player) {
-        if (cursors.containsKey(player.uniqueId)) packets.requestRotationSample(player)
+        if (player.uniqueId !in suspendedInputs && cursors.containsKey(player.uniqueId)) packets.requestRotationSample(player)
     }
 
     private fun consumeRotation(player: Player, yaw: Float, pitch: Float): Boolean {
         val state = cursors[player.uniqueId] ?: return false
         var requestRecentre = false
         synchronized(state) {
+            if (player.uniqueId in suspendedInputs) {
+                state.lastYaw = yaw
+                state.lastPitch = pitch
+                return true
+            }
             if (state.recentring) {
                 val yawClose = abs(wrapVirtualCursorDegrees((yaw - state.restoreYaw).toDouble())) <= RECENTRE_EPSILON
                 val pitchClose = abs(pitch - state.restorePitch) <= RECENTRE_EPSILON
@@ -366,9 +384,10 @@ class PointerController(
 
     private fun consumeInput(player: Player, button: PointerButton): Boolean {
         if (player.uniqueId !in activeInputs) return false
+        if (player.uniqueId in suspendedInputs) return true
         if (menuInput.available(player)) return true
         ArcScheduler.execute(plugin, player, Runnable {
-            if (player.uniqueId in activeInputs) activated(player, button, player.isSneaking)
+            if (player.uniqueId in activeInputs && player.uniqueId !in suspendedInputs) activated(player, button, player.isSneaking)
         })
         return true
     }
@@ -434,6 +453,7 @@ class PointerController(
         cursors.values.forEach { it.camera.remove() }
         cursors.clear()
         activeInputs.clear()
+        suspendedInputs.clear()
         menuInput.close()
         packets.close()
     }

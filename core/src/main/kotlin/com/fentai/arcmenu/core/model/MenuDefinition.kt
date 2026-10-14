@@ -14,10 +14,38 @@ data class Transform(
     val scaleX: Double = 1.0, val scaleY: Double = 1.0, val scaleZ: Double = 1.0,
 )
 
+enum class CanvasDepthMode { PERSPECTIVE, LAYERED }
+
 data class Canvas(
     val width: Double = 320.0, val height: Double = 180.0,
     val pixelsPerBlock: Double = 100.0, val distance: Double = 3.0,
-)
+    val depthMode: CanvasDepthMode = CanvasDepthMode.PERSPECTIVE,
+) {
+    /** Retains the original constructor used by compiled menu integrations. */
+    constructor(
+        width: Double = 320.0, height: Double = 180.0,
+        pixelsPerBlock: Double = 100.0, distance: Double = 3.0,
+    ) : this(width, height, pixelsPerBlock, distance, CanvasDepthMode.PERSPECTIVE)
+
+    @JvmName("copy")
+    fun copyLegacy(width: Double, height: Double, pixelsPerBlock: Double, distance: Double) =
+        copy(width, height, pixelsPerBlock, distance, depthMode)
+
+    companion object {
+        @JvmStatic
+        @JvmName("copy\$default")
+        @Suppress("UNUSED_PARAMETER")
+        fun copyLegacyDefaults(
+            canvas: Canvas, width: Double, height: Double, pixelsPerBlock: Double, distance: Double,
+            mask: Int, marker: Any?,
+        ) = canvas.copyLegacy(
+            if (mask and 1 != 0) canvas.width else width,
+            if (mask and 2 != 0) canvas.height else height,
+            if (mask and 4 != 0) canvas.pixelsPerBlock else pixelsPerBlock,
+            if (mask and 8 != 0) canvas.distance else distance,
+        )
+    }
+}
 
 data class NodeProperties(val id: String, val transform: Transform = Transform(), val visible: Boolean = true)
 
@@ -59,7 +87,20 @@ data class InteractionRegion(
     val deny: List<MenuAction> = emptyList(),
     val onHover: List<ActionReaction> = emptyList(),
     val onLeave: List<ActionReaction> = emptyList(),
+    val arcitx: ArcitxInput? = null,
 ) {
+    /** Preserves the constructor used by integrations with hover reactions. */
+    constructor(
+        id: String, x: Double, y: Double, width: Double, height: Double,
+        priority: Int = 0, tooltip: List<String> = emptyList(),
+        tooltipUpdateTicks: Int = -1,
+        condition: ConditionExpression? = null,
+        actions: ClickActions = ClickActions(),
+        deny: List<MenuAction> = emptyList(),
+        onHover: List<ActionReaction> = emptyList(),
+        onLeave: List<ActionReaction> = emptyList(),
+    ) : this(id, x, y, width, height, priority, tooltip, tooltipUpdateTicks, condition, actions, deny, onHover, onLeave, null)
+
     /** Preserves the original constructor used by compiled menu integrations. */
     constructor(
         id: String, x: Double, y: Double, width: Double, height: Double,
@@ -73,6 +114,13 @@ data class InteractionRegion(
     fun contains(point: MenuPoint): Boolean =
         point.x >= x - width / 2 && point.x <= x + width / 2 &&
             point.y >= y - height / 2 && point.y <= y + height / 2
+
+    /** Includes touching edges, where the inclusive hit tests would accept both regions. */
+    fun overlaps(other: InteractionRegion): Boolean =
+        x - width / 2 <= other.x + other.width / 2 &&
+            other.x - other.width / 2 <= x + width / 2 &&
+            y - height / 2 <= other.y + other.height / 2 &&
+            other.y - other.height / 2 <= y + height / 2
 }
 
 data class MenuDefinition(

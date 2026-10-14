@@ -1,0 +1,74 @@
+schema-version: 1
+id: arcitx-demo
+canvas:
+  width: 320
+  height: 180
+  pixels-per-block: 42.7
+frontend:
+  background:
+    type: rectangle
+    width: 300
+    height: 150
+    color: '#172033'
+    opacity: 220
+  heading:
+    type: text
+    content: '&fNative text input'
+    size: 11
+    offset: {y: 55, z: 1}
+  input-border:
+    type: frame
+    width: 260
+    height: 30
+    thickness: 1
+    color: '#7494B8'
+    offset: {y: 12, z: 1}
+  input-buffer:
+    type: text
+    content: ''
+    size: 8
+    offset: {y: 9, z: 2}
+  submit-background:
+    type: rectangle
+    width: 100
+    height: 24
+    color: '#3366AA'
+    offset: {y: -34, z: 1}
+  submit-label:
+    type: text
+    content: '&fSubmit'
+    size: 8
+    offset: {y: -37, z: 2}
+  instructions:
+    type: text
+    content: '&7Esc keeps your draft. Click the field to revise it.'
+    size: 6
+    offset: {y: -62, z: 2}
+backend:
+  edit-input:
+    type: Arcitx
+    x: 0
+    y: 12
+    width: 260
+    height: 30
+    text: input-buffer
+    submit: submit-input
+    title: Enter text
+    initial: ''
+    max-length: 50
+    mask: ''
+    display:
+      before: '&7Click to enter text'
+      editing: '&f{input}{caret}'
+      draft: '&f{input}'
+      complete: '&a{input}'
+    caret:
+      content: '_'
+      interval: 10
+  submit-input:
+    x: 0
+    y: -34
+    width: 100
+    height: 24
+    actions:
+      left: 'tell: &aSubmitted: {meta:input-edit-input}'

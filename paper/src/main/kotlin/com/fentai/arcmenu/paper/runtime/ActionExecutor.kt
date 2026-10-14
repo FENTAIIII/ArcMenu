@@ -43,6 +43,7 @@ class ActionExecutor(
     private val language: LanguageManager,
 ) {
     private val warnedSounds = mutableSetOf<String>()
+    private val warnedNumericExpressions = mutableSetOf<String>()
     private val balances = ExternalBalanceBridge(plugin, language)
     private val items = ItemActions()
     @Suppress("DEPRECATION") // Paper 26.2 deprecates the legacy Sound key bridge retained by the 1.21.1 baseline.
@@ -59,7 +60,21 @@ class ActionExecutor(
             }
         }
     }
-    fun evaluate(expression: ConditionExpression, player: Player): Boolean = ConditionLanguage.evaluate(expression, context(player))
+    fun evaluate(expression: ConditionExpression, player: Player): Boolean = evaluateCondition(expression, context(player))
+
+    private fun evaluateCondition(expression: ConditionExpression, context: ConditionContext): Boolean = try {
+        ConditionLanguage.evaluate(expression, context)
+    } catch (error: NumericExpressionException) {
+        warnNumericExpression("condition", error)
+        false
+    }
+
+    private fun warnNumericExpression(context: String, error: NumericExpressionException) {
+        val key = "$context:${error.expression}:${error.message}"
+        if (warnedNumericExpressions.add(key)) {
+            plugin.logger.warning(language.log("log.invalid-numeric-expression", context, error.expression, error.message.orEmpty()))
+        }
+    }
 
     fun run(reactions: List<ActionReaction>, player: Player, control: RuntimeControl): ActionResult {
         return runOrdered(reactions.sortedWith(compareBy<ActionReaction> { it.priority }.thenBy { it.order }), player, control)
@@ -68,7 +83,7 @@ class ActionExecutor(
     fun runOrdered(reactions: List<ActionReaction>, player: Player, control: RuntimeControl): ActionResult {
         val context = context(player)
         for (reaction in reactions) {
-            val accepted = reaction.condition?.let { ConditionLanguage.evaluate(it, context) } ?: true
+            val accepted = reaction.condition?.let { evaluateCondition(it, context) } ?: true
             val result = runActions(if (accepted) reaction.actions else reaction.deny, player, control)
             if (result != ActionResult.CONTINUE) return result
         }
@@ -80,7 +95,14 @@ class ActionExecutor(
         override fun hasPermission(permission: String) = player.hasPermission(permission)
     }
 
-    fun runActions(actions: List<MenuAction>, player: Player, control: RuntimeControl): ActionResult {
+    fun runActions(actions: List<MenuAction>, player: Player, control: RuntimeControl): ActionResult = try {
+        runActionsChecked(actions, player, control)
+    } catch (error: NumericExpressionException) {
+        warnNumericExpression("action", error)
+        ActionResult.RETURN
+    }
+
+    private fun runActionsChecked(actions: List<MenuAction>, player: Player, control: RuntimeControl): ActionResult {
         var accumulatedDelay = 0L
         var sessionChanged = false
         val delayedChainStopped = AtomicBoolean(false)
@@ -130,7 +152,14 @@ class ActionExecutor(
         return if (sessionChanged) ActionResult.SESSION_CHANGED else ActionResult.CONTINUE
     }
 
-    private fun executeOne(action: MenuAction, player: Player, placeholderPlayer: Player, control: RuntimeControl): ActionResult {
+    private fun executeOne(action: MenuAction, player: Player, placeholderPlayer: Player, control: RuntimeControl): ActionResult = try {
+        executeExpandedAction(action, player, placeholderPlayer, control)
+    } catch (error: NumericExpressionException) {
+        warnNumericExpression("action", error)
+        ActionResult.RETURN
+    }
+
+    private fun executeExpandedAction(action: MenuAction, player: Player, placeholderPlayer: Player, control: RuntimeControl): ActionResult {
         fun expand(value: String) = placeholders.expand(placeholderPlayer, value)
         return when (action) {
             is TellAction -> {
@@ -236,8 +265,8 @@ class ActionExecutor(
                 ActionResult.CONTINUE
             }
             is BalanceAction -> {
-                val amount = expand(action.amount).toDoubleOrNull()
-                if (amount != null && amount > 0) balances.apply(player, action.kind, action.operation, amount)
+                val amount = NumericExpressions.evaluate(expand(action.amount))
+                if (amount > 0) balances.apply(player, action.kind, action.operation, amount)
                 ActionResult.CONTINUE
             }
             is GiveItemAction -> {

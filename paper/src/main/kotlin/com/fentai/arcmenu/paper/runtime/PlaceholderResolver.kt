@@ -1,5 +1,7 @@
 package com.fentai.arcmenu.paper.runtime
 
+import com.fentai.arcmenu.core.behavior.NumericExpressions
+import com.fentai.arcmenu.core.behavior.StateScope
 import com.fentai.arcmenu.paper.localization.LanguageManager
 import org.bukkit.entity.Player
 import org.bukkit.plugin.Plugin
@@ -21,9 +23,9 @@ class PlaceholderResolver(
     fun expand(player: Player, source: String): String {
         var value = function.replace(source) { match ->
             val scope = when (match.groupValues[1].lowercase()) {
-                "meta", "m" -> com.fentai.arcmenu.core.behavior.StateScope.META
-                "data", "d" -> com.fentai.arcmenu.core.behavior.StateScope.DATA
-                else -> com.fentai.arcmenu.core.behavior.StateScope.GLOBAL
+                "meta", "m" -> StateScope.META
+                "data", "d" -> StateScope.DATA
+                else -> StateScope.GLOBAL
             }
             state.get(player, scope, match.groupValues[2].trim()) ?: "null"
         }
@@ -31,9 +33,9 @@ class PlaceholderResolver(
         value = named.replace(value) { match ->
             when (match.groupValues[1].lowercase()) {
                 "args" -> state.arguments(player).getOrNull(match.groupValues[2].toIntOrNull() ?: -1)
-                "meta" -> state.get(player, com.fentai.arcmenu.core.behavior.StateScope.META, match.groupValues[2])
-                "data" -> state.get(player, com.fentai.arcmenu.core.behavior.StateScope.DATA, match.groupValues[2])
-                else -> state.get(player, com.fentai.arcmenu.core.behavior.StateScope.GLOBAL, match.groupValues[2])
+                "meta" -> state.get(player, StateScope.META, match.groupValues[2])
+                "data" -> state.get(player, StateScope.DATA, match.groupValues[2])
+                else -> state.get(player, StateScope.GLOBAL, match.groupValues[2])
             } ?: "null"
         }
         value = value
@@ -43,9 +45,9 @@ class PlaceholderResolver(
             .replace("%player_x%", number(player.location.x), ignoreCase = true)
             .replace("%player_y%", number(player.location.y), ignoreCase = true)
             .replace("%player_z%", number(player.location.z), ignoreCase = true)
-        val method = placeholderApi() ?: return value
+        val method = placeholderApi()
         value = try {
-            method.invoke(null, player, value) as? String ?: value
+            method?.invoke(null, player, value) as? String ?: value
         } catch (error: ReflectiveOperationException) {
             if (!placeholderWarningSent) {
                 placeholderWarningSent = true
@@ -55,7 +57,7 @@ class PlaceholderResolver(
             }
             value
         }
-        return value
+        return NumericExpressions.expandPlaceholders(value)
     }
 
     private fun placeholderApi(): Method? {

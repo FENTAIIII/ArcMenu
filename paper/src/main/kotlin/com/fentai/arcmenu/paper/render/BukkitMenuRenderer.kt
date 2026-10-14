@@ -42,6 +42,10 @@ class BukkitMenuRenderer(
     private val craftEngine: CraftEngineBridge,
     private val performance: PerformanceMetrics,
 ) {
+    var depthEye: (Player, MenuPlane, Boolean) -> Vec3 = { player, plane, fixedCamera ->
+        if (fixedCamera) plane.viewerEye ?: player.eyeLocation.let { Vec3(it.x, it.y, it.z) }
+        else player.eyeLocation.let { Vec3(it.x, it.y, it.z) }
+    }
     private val compiler = SceneCompiler()
     private val itemFactory = MenuHeadItemFactory(plugin, craftEngine)
     private data class ImageHandle(val display: TextDisplay, var primitive: Image, var frame: Int = -1)
@@ -79,9 +83,10 @@ class BukkitMenuRenderer(
         tooltipStyle: TooltipStyle? = null,
         cursorStyle: CursorStyle? = null,
         initialAnimation: AnimationSnapshot = AnimationSnapshot(),
+        textOverrides: Map<String, Component> = emptyMap(),
     ): MenuView {
         check(Bukkit.isPrimaryThread()) { "Display operations require the server thread" }
-        val view = MenuView(player, plane)
+        val view = MenuView(player, plane, textOverrides, mode != MenuViewMode.RUNTIME || cursorStyle != null)
         try {
             compiler.compile(menu.frontend, initialAnimation).forEach { view.draw(it, resolve, initialAnimation) }
             if (mode == MenuViewMode.BACKEND_PREVIEW) menu.backend.forEach { view.region(it) }
@@ -95,7 +100,16 @@ class BukkitMenuRenderer(
         }
     }
 
-    inner class MenuView(private val player: Player, private val plane: MenuPlane) : AutoCloseable {
+    inner class MenuView(
+        private val player: Player, private val plane: MenuPlane,
+        initialTextOverrides: Map<String, Component> = emptyMap(),
+        private val fixedCamera: Boolean = false,
+    ) : AutoCloseable {
+        private var layerEye: Vec3? = if (plane.canvas.depthMode == CanvasDepthMode.LAYERED)
+            depthEye(player, plane, fixedCamera) else null
+        // Retain current geometry only for layered views so a moving touch eye can reproject it.
+        private val layerTransforms: MutableMap<Int, Matrix4d>? = if (layerEye != null) mutableMapOf() else null
+        private val textOverrides = initialTextOverrides.toMutableMap()
         private val entities = mutableListOf<Display>()
         private val overlays = mutableMapOf<String, TextDisplay>()
         private val texts = mutableMapOf<String, TextDisplay>()
@@ -129,6 +143,16 @@ class BukkitMenuRenderer(
         val entityCount: Int get() = entities.size
         val valid: Boolean get() = entities.all { it.isValid }
 
+        fun refreshDepthEye() {
+            if (layerEye == null) return
+            val nextEye = depthEye(player, plane, fixedCamera)
+            if (nextEye == layerEye) return
+            layerEye = nextEye
+            entities.forEach { display -> layerTransforms?.get(display.entityId)?.let { local ->
+                matrix(display, local)
+            } }
+        }
+
         fun draw(
             primitive: Primitive,
             resolve: (String) -> String = { it },
@@ -141,8 +165,9 @@ class BukkitMenuRenderer(
                 is Text -> {
                     val node = primitive.node
                     val display = spawn(TextDisplay::class.java)
-                    val content = resolve(animation.textContents[primitive.id] ?: node.content)
-                    display.text(textComponent(content, node.font))
+                    val content = if (primitive.id in textOverrides) node.content
+                        else resolve(animation.textContents[primitive.id] ?: node.content)
+                    display.text(textOverrides[primitive.id]?.font(Key.key(node.font)) ?: textComponent(content, node.font))
                     display.backgroundColor = Color.fromARGB(0)
                     display.isDefaultBackground = false
                     val opacity = animation.textOpacities[primitive.id] ?: node.opacity
@@ -225,7 +250,7 @@ class BukkitMenuRenderer(
             val textNodes = textNodes(menu.frontend).associateBy { it.properties.id }
             (animatedContentIds + animation.textContents.keys).forEach { id ->
                 val node = textNodes[id] ?: return@forEach
-                updateText(id, resolve(animation.textContents[id] ?: node.content))
+                if (id !in textOverrides) updateText(id, resolve(animation.textContents[id] ?: node.content))
             }
             (animatedOpacityIds + animation.textOpacities.keys).forEach { id ->
                 val node = textNodes[id] ?: return@forEach
@@ -276,6 +301,7 @@ class BukkitMenuRenderer(
         }
 
         fun updateText(id: String, content: String) {
+            if (id in textOverrides) return
             if (textValues[id] == content) {
                 performance.metadataSkip()
                 return
@@ -283,6 +309,15 @@ class BukkitMenuRenderer(
             val display = texts[id] ?: return
             display.text(textComponent(content, textFonts.getValue(id)))
             textValues[id] = content
+            performance.metadataWrite()
+        }
+
+        /** Bound input owns its content while geometry and opacity animations remain active. */
+        fun updateTextOverride(id: String, content: Component) {
+            val display = texts[id] ?: return
+            if (textOverrides[id] == content) return
+            textOverrides[id] = content
+            display.text(content.font(Key.key(textFonts.getValue(id))))
             performance.metadataWrite()
         }
 
@@ -600,7 +635,9 @@ class BukkitMenuRenderer(
                 .scale(width, height, 1.0).translate(0.4, 0.0, 0.0).scale(8.08, 3.66, 1.0)
 
         private fun matrix(display: Display, local: Matrix4dc, interpolationTicks: Int = 0) {
-            val next = Matrix4f(Matrix4d(base).mul(local))
+            layerTransforms?.set(display.entityId, Matrix4d(local))
+            val model = Matrix4d(base).mul(local)
+            val next = Matrix4f(layerEye?.let { eye -> plane.displayMatrix(model, eye) } ?: model)
             require(next.isFinite) { "展示变换超出有效数值范围" }
             val previous = displayMatrices[display.entityId]
             if (previous != null && previous.equals(next, MATRIX_EPSILON)) {
@@ -665,6 +702,7 @@ class BukkitMenuRenderer(
 
         private fun removeDisplay(display: Display) {
             entities.remove(display)
+            layerTransforms?.remove(display.entityId)
             displayMatrices.remove(display.entityId)
             displayRotations.remove(display.entityId)
             interpolationPrimed.remove(display.entityId)
@@ -679,6 +717,7 @@ class BukkitMenuRenderer(
         override fun close() {
             entities.forEach { it.remove() }
             entities.clear()
+            layerTransforms?.clear()
             overlays.clear()
             texts.clear()
             textValues.clear()

@@ -117,7 +117,26 @@ class CommunityMenuCompatibilityTest {
             draft.create(0, EditorProtocol.TAB_BACKEND, EditorProtocol.KIND_REGION, "")
             draft.save(draft.revision)
             val gson = Gson()
-            for (yaml in listOf(source(), Files.readString(file))) {
+            val arcitx = requireNotNull(javaClass.getResourceAsStream("/menus/arcitx-test.yml"))
+                .bufferedReader().use { it.readText() }
+            val calculated = """
+                schema-version: 1
+                id: calculated
+                canvas: {pixels-per-block: 42.7, depth-mode: layered}
+                frontend:
+                  total: {type: text, content: '{math: round(3 * 24 * 0.95, 2)}'}
+                backend:
+                  buy:
+                    width: 20
+                    height: 20
+                    condition: '1000 >= {meta:input-x} * 24'
+                    actions:
+                      right:
+                        - 'set-meta: total {math: {meta:input-x} * 24}'
+                        - 'take-money: round({meta:input-x} * 24, 2)'
+                        - 'tell: Budget accepted {condition=1000 >= {meta:input-x} * 24}'
+            """.trimIndent()
+            for (yaml in listOf(source(), Files.readString(file), arcitx, calculated)) {
                 val community = parser.parse(yaml)
                 val paid = parse.invoke(premiumParser, yaml, "menu.yml")
                 assertEquals(gson.toJson(definition.invoke(paid)), gson.toJson(community.definition))

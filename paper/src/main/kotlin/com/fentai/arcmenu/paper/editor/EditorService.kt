@@ -2,6 +2,7 @@ package com.fentai.arcmenu.paper.editor
 
 import com.fentai.arcmenu.paper.localization.localizedRequire
 import com.fentai.arcmenu.paper.localization.localizedError
+import com.fentai.arcmenu.paper.localization.localizedArgumentFailure
 import com.fentai.arcmenu.core.config.LoadResult
 import com.fentai.arcmenu.core.config.MenuParser
 import com.fentai.arcmenu.core.config.TemplateLoadResult
@@ -54,6 +55,7 @@ class EditorService(
     private val writers = mutableMapOf<String, UUID>()
     private val clientVersions = mutableMapOf<UUID, String>()
     private val rates = mutableMapOf<UUID, Rate>()
+    private val incomingFrames = mutableMapOf<UUID, EditorProtocol.FrameAssembler>()
     private val nextMessage = AtomicInteger(1)
     private val writerKeys = mutableMapOf<UUID, String>()
 
@@ -87,11 +89,19 @@ class EditorService(
             backupFile = plugin.dataFolder.toPath().resolve("backup-menu")
                 .resolve("${document.sourceName}.arcmenu-backup").normalize(),
         )
+        // Validate the entire response before acquiring a writer or opening a preview.
+        encode(snapshot(draft))
         writers[menuId] = player.uniqueId
         drafts[player.uniqueId] = draft
-        sessions.openPreview(player, draft.definition, MenuViewMode.FRONTEND_PREVIEW)
-        send(player, EditorProtocol.SwitchTabPacket(EditorProtocol.TAB_FRONTEND))
-        sendSnapshot(player, draft)
+        try {
+            localizedRequire(sessions.openPreview(player, draft.definition, MenuViewMode.FRONTEND_PREVIEW) > 0,
+                "editor.preview-open-failed", "Editor preview could not be opened")
+            send(player, EditorProtocol.SwitchTabPacket(EditorProtocol.TAB_FRONTEND))
+            sendSnapshot(player, draft)
+        } catch (error: Exception) {
+            close(player)
+            throw protocolFailure(error)
+        }
         return text(player, "editor.opened", menuId, EditorProtocol.VERSION,
             clientVersions[player.uniqueId] ?: text(player, "editor.connected"))
     }
@@ -139,6 +149,7 @@ class EditorService(
         close(player)
         clientVersions.remove(player.uniqueId)
         rates.remove(player.uniqueId)
+        incomingFrames.remove(player.uniqueId)
     }
 
     @Synchronized fun close(player: Player) {
@@ -155,8 +166,11 @@ class EditorService(
             return
         }
         try {
+            val bytes = if (EditorProtocol.isFrame(message)) {
+                incomingFrames.getOrPut(player.uniqueId) { EditorProtocol.FrameAssembler() }.accept(message) ?: return
+            } else message
             if (!allow(player)) throw IllegalArgumentException(text(player, "editor.throttled"))
-            when (val packet = EditorProtocol.decode(message)) {
+            when (val packet = EditorProtocol.decode(bytes)) {
                 is EditorProtocol.HelloPacket -> {
                     if (EditorProtocol.supportsClient(packet.clientVersion())) clientVersions[player.uniqueId] = packet.clientVersion()
                     else rejectEditor(player)
@@ -168,8 +182,16 @@ class EditorService(
             rejectEditor(player)
         } catch (error: Exception) {
             val revision = drafts[player.uniqueId]?.revision ?: -1
-            send(player, EditorProtocol.ErrorPacket(revision, language.errorText(player, error, "editor.protocol-error")))
-            drafts[player.uniqueId]?.let { sendSnapshot(player, it) }
+            send(player, EditorProtocol.ErrorPacket(revision,
+                language.errorText(player, protocolFailure(error), "editor.protocol-error")))
+            drafts[player.uniqueId]?.let { draft ->
+                try {
+                    sendSnapshot(player, draft)
+                } catch (snapshotError: Exception) {
+                    plugin.logger.warning(language.log("editor.snapshot-failed", draft.menuId,
+                        language.errorText(player, protocolFailure(snapshotError), "editor.protocol-error")))
+                }
+            }
         }
     }
 
@@ -356,15 +378,18 @@ class EditorService(
     }
 
     private fun sendSnapshot(player: Player, draft: EditorDraft) {
+        send(player, snapshot(draft))
+    }
+
+    private fun snapshot(draft: EditorDraft): EditorProtocol.SnapshotPacket {
         val templateSnapshots = templates().values.sortedBy { it.id }.map { template ->
             fun count(nodes: List<VisualNode>): Int = nodes.sumOf { node ->
                 1 + if (node is GroupNode) count(node.children) else 0
             }
             EditorProtocol.TemplateSnapshot(template.id, template.root.properties.id, count(listOf(template.root)))
         }
-        val snapshot = draft.snapshot(serverVersion(), images(), templateSnapshots,
+        return draft.snapshot(serverVersion(), images(), templateSnapshots,
             draft.definition)
-        send(player, snapshot)
     }
 
     private fun coordinates(pointer: EditorProtocol.Pointer, draft: EditorDraft): MenuPoint {
@@ -378,9 +403,21 @@ class EditorService(
     }
 
     private fun send(player: Player, packet: EditorProtocol.Packet) {
-        EditorProtocol.frame(nextMessage.getAndIncrement(), EditorProtocol.encode(packet)).forEach { frame ->
+        EditorProtocol.frame(nextMessage.getAndIncrement(), encode(packet)).forEach { frame ->
             player.sendPluginMessage(plugin, EditorProtocol.CHANNEL, frame)
         }
+    }
+
+    private fun encode(packet: EditorProtocol.Packet): ByteArray = try {
+        EditorProtocol.encode(packet)
+    } catch (error: Exception) { throw protocolFailure(error) }
+
+    private fun protocolFailure(error: Exception): Exception = when (error) {
+        is EditorProtocol.StringLimitException -> localizedArgumentFailure("editor.string-too-long",
+            error.message.orEmpty(), error.field(), error.byteCount(), EditorProtocol.MAX_STRING_BYTES)
+        is EditorProtocol.PacketLimitException -> localizedArgumentFailure("editor.packet-too-large",
+            error.message.orEmpty(), error.byteCount(), EditorProtocol.MAX_PACKET_BYTES)
+        else -> error
     }
 
     private fun allow(player: Player): Boolean {
@@ -422,6 +459,7 @@ class EditorService(
     override @Synchronized fun close() {
         closeAll()
         clientVersions.clear()
+        incomingFrames.clear()
         plugin.server.messenger.unregisterIncomingPluginChannel(plugin, EditorProtocol.CHANNEL, this)
         plugin.server.messenger.unregisterOutgoingPluginChannel(plugin, EditorProtocol.CHANNEL)
     }

@@ -3,11 +3,12 @@ package com.fentai.arcmenu.protocol
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
 
 class EditorProtocolTest {
     @Test fun `old protocol is identifiable for a vanilla chat upgrade message`() {
         val old = EditorProtocol.encode(EditorProtocol.HelloPacket("0.1.0-M3.3"))
-        old[4] = 8
+        old[4] = 9
         assertThrows(EditorProtocol.ProtocolMismatchException::class.java) { EditorProtocol.decode(old) }
         assertFalse(EditorProtocol.supportsClient("0.1.0-M3.3"))
         assertFalse(EditorProtocol.supportsClient(null))
@@ -17,8 +18,9 @@ class EditorProtocolTest {
         assertTrue(EditorProtocol.supportsClient("1.2.0"))
         assertTrue(EditorProtocol.supportsClient("1.2.1"))
         assertTrue(EditorProtocol.supportsClient("3.0.0"))
-        assertEquals("3.0.0", EditorProtocol.EDITOR_VERSION)
-        assertEquals(9, EditorProtocol.VERSION)
+        assertTrue(EditorProtocol.supportsClient("3.0.1"))
+        assertEquals("3.0.1", EditorProtocol.EDITOR_VERSION)
+        assertEquals(10, EditorProtocol.VERSION)
     }
 
     private val pointer = EditorProtocol.Pointer(
@@ -105,5 +107,61 @@ class EditorProtocolTest {
         assertThrows(IllegalArgumentException::class.java) {
             EditorProtocol.decodeFrame(frame.copyOf(frame.size - 1))
         }
+    }
+
+    @Test fun `UTF8 string boundary and oversized property identify the responsible field`() {
+        val value = "中".repeat(EditorProtocol.MAX_STRING_BYTES / 3) + "a"
+        val packet = EditorProtocol.SetPropertyPacket(7, EditorProtocol.TAB_BACKEND, "buy", "actions", value)
+        assertEquals(EditorProtocol.MAX_STRING_BYTES, value.toByteArray(Charsets.UTF_8).size)
+        assertEquals(packet, EditorProtocol.decode(EditorProtocol.encode(packet)))
+        val failure = assertThrows(EditorProtocol.StringLimitException::class.java) {
+            EditorProtocol.encode(packet.copyValue(value + "a"))
+        }
+        assertEquals("backend.buy.actions", failure.field())
+        assertEquals(EditorProtocol.MAX_STRING_BYTES + 1, failure.byteCount())
+        assertTrue(failure.message!!.contains("UTF-8 bytes"))
+        val node = EditorProtocol.NodeSnapshot("buy", "", EditorProtocol.KIND_REGION, 0.0, 0.0, 1.0, 1.0,
+            0.0, true, false, listOf(EditorProtocol.PropertySnapshot("actions", EditorProtocol.PROPERTY_MULTILINE, value + "a")))
+        val snapshot = EditorProtocol.SnapshotPacket(7, "shop", 320.0, 180.0, false, true, "26.3", emptyList(), listOf(node))
+        assertEquals("backend.buy.actions", assertThrows(EditorProtocol.StringLimitException::class.java) {
+            EditorProtocol.encode(snapshot)
+        }.field())
+    }
+
+    private fun EditorProtocol.SetPropertyPacket.copyValue(value: String) =
+        EditorProtocol.SetPropertyPacket(revision(), tab(), nodeId(), key(), value, gestureId(), finalUpdate())
+
+    @Test fun `large Chinese edit assembles both directions with reordered and repeated frames`() {
+        val packet = EditorProtocol.SetPropertyPacket(3, EditorProtocol.TAB_BACKEND, "buy", "actions", "right: 'tell: " + "中文".repeat(13_000) + "'")
+        val frames = EditorProtocol.frame(42, EditorProtocol.encode(packet))
+        assertTrue(frames.size > 1)
+        val assembler = EditorProtocol.FrameAssembler()
+        assertNull(assembler.accept(frames.last()))
+        assertNull(assembler.accept(frames.last()))
+        for (frame in frames.dropLast(1).drop(1)) assertNull(assembler.accept(frame))
+        val assembled = assembler.accept(frames.first())
+        assertEquals(packet, EditorProtocol.decode(assembled))
+        val stale = frames.first().clone().also { it[4] = 9 }
+        assertThrows(EditorProtocol.ProtocolMismatchException::class.java) { assembler.accept(stale) }
+    }
+
+    @Test fun `negative and oversized incoming byte lengths are rejected`() {
+        val hello = EditorProtocol.encode(EditorProtocol.HelloPacket("ok"))
+        for (length in listOf(-1, EditorProtocol.MAX_STRING_BYTES + 1)) {
+            val corrupted = hello.clone()
+            ByteBuffer.wrap(corrupted).putInt(6, length)
+            assertThrows(IllegalArgumentException::class.java) { EditorProtocol.decode(corrupted) }
+        }
+    }
+
+    @Test fun `packet cap remains independent of individual string cap`() {
+        val nodes = (0..4).map { index ->
+            EditorProtocol.NodeSnapshot("node-$index", "", EditorProtocol.KIND_TEXT, 0.0, 0.0, 10.0, 10.0,
+                0.0, true, false, listOf(EditorProtocol.PropertySnapshot("content", EditorProtocol.PROPERTY_TEXT, "a".repeat(240_000))))
+        }
+        val snapshot = EditorProtocol.SnapshotPacket(1, "large", 320.0, 180.0, false, true, "26.3", nodes, emptyList())
+        val failure = assertThrows(EditorProtocol.PacketLimitException::class.java) { EditorProtocol.encode(snapshot) }
+        assertTrue(failure.byteCount() > EditorProtocol.MAX_PACKET_BYTES)
+        assertTrue(failure.message!!.contains(EditorProtocol.MAX_PACKET_BYTES.toString()))
     }
 }

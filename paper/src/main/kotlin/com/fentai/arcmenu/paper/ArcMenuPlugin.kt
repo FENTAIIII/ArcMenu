@@ -47,6 +47,7 @@ import org.bukkit.inventory.EquipmentSlot
 import org.bukkit.plugin.java.JavaPlugin
 import org.bukkit.plugin.ServicePriority
 import com.fentai.arcmenu.core.model.MenuDocument
+import com.fentai.arcmenu.core.model.Vec3
 import com.fentai.arcmenu.protocol.EditorProtocol
 import com.fentai.arcmenu.paper.util.decimal
 import com.fentai.arcmenu.paper.workspace.WorkspaceService
@@ -118,6 +119,10 @@ class ArcMenuPlugin : JavaPlugin(), Listener {
         val placeholders = PlaceholderResolver(this, state, language)
         pointer = PointerController(this, PointerSettingsLoader.load(this), performance::entitySpawn) { player, button, shift ->
             if (::sessions.isInitialized) sessions.activate(player, button, shift)
+        }
+        renderer.depthEye = { player, plane, fixedCamera ->
+            (if (fixedCamera) pointer.fixedCameraEye(player) ?: plane.viewerEye else null)
+                ?: player.eyeLocation.let { Vec3(it.x, it.y, it.z) }
         }
         val result = catalog.reload(menuDirectory, renderer::validate, this::validateMenuSet)
         initialCatalogPending = !result.applied
@@ -312,7 +317,7 @@ class ArcMenuPlugin : JavaPlugin(), Listener {
                         menuCommands.replace(candidateCatalog.documents)
                         catalog = candidateCatalog
                         animationCatalog = candidateAnimations
-                        sessions.close()
+                        sessions.closeMenus()
                         sessions.updateTooltipStyle(tooltipStyle)
                         sessions.updateRuntimeScreen(runtimeScreenSettings)
                         pointer.updateSettings(pointerSettings)

@@ -117,7 +117,7 @@ object ActionLanguage {
     private val actionBoundary = Regex(" ?(?:_\\|\\|_|&&&) ?")
     private val delayOption = Regex("(?i)[{<](?:delay|wait)[=:] ?([0-9]+)[}>]")
     private val chanceOption = Regex("(?i)[{<](?:chance|rate|rand(?:om)?)[=:] ?([0-9.]+)[}>]")
-    private val conditionOption = Regex("(?i)\\{(?:condition|requirement)[=:] ?(.+?)}")
+    private val conditionOption = Regex("(?i)\\{(?:condition|requirement)[=:] ?")
     private val playersOption = Regex("(?i)[{<]players(?:[=:] ?(.*?))?[}>]")
     private val compactAliases = mapOf(
         "sendtitle" to "send-title", "sendtitles" to "send-titles", "sendsubtitle" to "send-subtitle", "sendsubtitles" to "send-subtitles",
@@ -230,11 +230,36 @@ object ActionLanguage {
         val delay = delayOption.find(content)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
         val chance = chanceOption.find(content)?.groupValues?.get(1)?.toDoubleOrNull() ?: 1.0
         if (!chance.isFinite() || chance !in 0.0..1.0) throw BehaviorSyntaxException("Chance/Rate must be between 0 and 1")
-        val condition = conditionOption.find(content)?.groupValues?.get(1)?.trim()?.takeIf(String::isNotEmpty)?.let(ConditionLanguage::parse)
+        val conditionMatch = conditionOption.find(content)
+        var condition: ConditionExpression? = null
+        if (conditionMatch != null) {
+            val start = conditionMatch.range.last + 1
+            var end = start
+            var depth = 1
+            var quote: Char? = null
+            while (end < content.length && depth > 0) {
+                val character = content[end]
+                if (quote != null) {
+                    if (character == quote && (end == start || content[end - 1] != '\\')) quote = null
+                } else {
+                    when (character) {
+                        '`', '\'', '"' -> quote = character
+                        '{' -> depth++
+                        '}' -> depth--
+                    }
+                }
+                if (depth > 0) end++
+            }
+            if (depth != 0) throw BehaviorSyntaxException("Condition option is missing its closing brace")
+            val expression = content.substring(start, end).trim()
+            if (expression.isEmpty()) throw BehaviorSyntaxException("Condition option must not be empty")
+            condition = ConditionLanguage.parse(expression)
+            content = content.removeRange(conditionMatch.range.first, end + 1)
+        }
         val playersMatch = playersOption.find(content)
         val playersSource = playersMatch?.groupValues?.getOrNull(1)?.trim().orEmpty()
         val players = playersSource.takeIf(String::isNotEmpty)?.let(ConditionLanguage::parse)
-        for (regex in listOf(delayOption, chanceOption, conditionOption, playersOption)) content = regex.replace(content, "")
+        for (regex in listOf(delayOption, chanceOption, playersOption)) content = regex.replace(content, "")
         return content.trim() to ActionOptions(delay, chance, condition, players, playersMatch != null && playersSource.isEmpty())
     }
 
@@ -332,7 +357,7 @@ object ConditionLanguage {
         is AllCondition -> expression.expressions.all { evaluate(it, context) }
         is AnyCondition -> expression.expressions.any { evaluate(it, context) }
         is CompareCondition -> compare(
-            clean(context.expand(expression.left)), expression.operator, clean(context.expand(expression.right)),
+            context.expand(expression.left), expression.operator, context.expand(expression.right),
         )
     }
 
@@ -439,9 +464,17 @@ object ConditionLanguage {
         return source.substring(1, source.length - 1).trim()
     }
 
-    private fun compare(left: String, operator: CompareOperator, right: String): Boolean {
-        val leftNumber = left.toDoubleOrNull()
-        val rightNumber = right.toDoubleOrNull()
+    private fun compare(leftSource: String, operator: CompareOperator, rightSource: String): Boolean {
+        val left = clean(leftSource)
+        val right = clean(rightSource)
+        if (operator == CompareOperator.CONTAINS) return left.contains(right, ignoreCase = true)
+        var leftNumber = number(leftSource, left)
+        var rightNumber = number(rightSource, right)
+        if (operator != CompareOperator.EQUALS && operator != CompareOperator.NOT_EQUALS &&
+            (leftNumber != null || rightNumber != null)) {
+            leftNumber = leftNumber ?: NumericExpressions.evaluate(left)
+            rightNumber = rightNumber ?: NumericExpressions.evaluate(right)
+        }
         val order = if (leftNumber != null && rightNumber != null) leftNumber.compareTo(rightNumber)
             else left.compareTo(right, ignoreCase = true)
         return when (operator) {
@@ -453,6 +486,14 @@ object ConditionLanguage {
             CompareOperator.LESS_OR_EQUAL -> order <= 0
             CompareOperator.CONTAINS -> left.contains(right, ignoreCase = true)
         }
+    }
+
+    private fun number(source: String, value: String): Double? {
+        val literal = value.toDoubleOrNull()
+        if (literal != null) return NumericExpressions.evaluate(value)
+        val raw = source.trim().removePrefix("*")
+        val quoted = raw.length >= 2 && raw.first() in "`\"'" && raw.last() == raw.first()
+        return if (!quoted && NumericExpressions.isNumeric(value)) NumericExpressions.evaluate(value) else null
     }
 
     private fun clean(value: String): String = value.trim().removePrefix("*").let {
