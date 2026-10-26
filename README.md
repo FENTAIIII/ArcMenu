@@ -34,12 +34,18 @@ These concept interfaces show the kind of experience third-party plugins can bui
 
 <table>
   <tr>
-    <td width="50%"><img src="assets/music-app.gif" alt="Music player concept"></td>
-    <td width="50%"><img src="assets/login-app.gif" alt="Account login concept"></td>
+    <td colspan="2"><img src="assets/music-app.gif" alt="Music player concept" width="100%"></td>
   </tr>
   <tr>
-    <td align="center"><strong>Music plugin</strong></td>
+    <td colspan="2" align="center"><strong>Music plugin</strong></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/login-app.gif" alt="Account login concept"></td>
+    <td width="50%"><img src="assets/item-shop.gif" alt="Item shop concept"></td>
+  </tr>
+  <tr>
     <td align="center"><strong>Account flows with a server identity</strong></td>
+    <td align="center"><strong>A shop built for your server</strong><br>Browse items, compare prices, and see purchase feedback in one interface.</td>
   </tr>
   <tr>
     <td><img src="assets/dungeon-app.gif" alt="Dungeon dialogue concept"></td>
