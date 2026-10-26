@@ -34,16 +34,16 @@ ArcMenu 是一款高级菜单插件。你可以为你的 Minecraft 服务器添�
 
 <table>
   <tr>
-    <td width="50%"><img src="assets/music-app.png" alt="音乐播放器概念界面"></td>
-    <td width="50%"><img src="assets/login-app.png" alt="账号登录概念界面"></td>
+    <td width="50%"><img src="assets/music-app.gif" alt="音乐播放器概念界面"></td>
+    <td width="50%"><img src="assets/login-app.gif" alt="账号登录概念界面"></td>
   </tr>
   <tr>
     <td align="center"><strong>音乐插件</strong></td>
     <td align="center"><strong>拥有服务器自身风格的登录流程</strong></td>
   </tr>
   <tr>
-    <td><img src="assets/dungeon-app.png" alt="副本对话概念界面"></td>
-    <td><img src="assets/social-app.png" alt="社交消息概念界面"></td>
+    <td><img src="assets/dungeon-app.gif" alt="副本对话概念界面"></td>
+    <td><img src="assets/social-app.gif" alt="社交消息概念界面"></td>
   </tr>
   <tr>
     <td align="center"><strong>剧情与副本交互</strong></td>

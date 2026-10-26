@@ -34,16 +34,16 @@ These concept interfaces show the kind of experience third-party plugins can bui
 
 <table>
   <tr>
-    <td width="50%"><img src="assets/music-app.png" alt="Music player concept"></td>
-    <td width="50%"><img src="assets/login-app.png" alt="Account login concept"></td>
+    <td width="50%"><img src="assets/music-app.gif" alt="Music player concept"></td>
+    <td width="50%"><img src="assets/login-app.gif" alt="Account login concept"></td>
   </tr>
   <tr>
     <td align="center"><strong>Music plugin</strong></td>
     <td align="center"><strong>Account flows with a server identity</strong></td>
   </tr>
   <tr>
-    <td><img src="assets/dungeon-app.png" alt="Dungeon dialogue concept"></td>
-    <td><img src="assets/social-app.png" alt="Social messaging concept"></td>
+    <td><img src="assets/dungeon-app.gif" alt="Dungeon dialogue concept"></td>
+    <td><img src="assets/social-app.gif" alt="Social messaging concept"></td>
   </tr>
   <tr>
     <td align="center"><strong>Story and dungeon interaction</strong></td>
