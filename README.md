@@ -12,11 +12,6 @@
   <a href="LICENSE">MIT License</a>
 </p>
 
-<p align="center">
-  <a href="https://github.com/FENTAIIII/ArcMenu/actions/workflows/build.yml"><img src="https://github.com/FENTAIIII/ArcMenu/actions/workflows/build.yml/badge.svg" alt="Build status"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-38bdf8.svg" alt="MIT License"></a>
-  <img src="https://img.shields.io/badge/Paper-1.21.1--26.2-8b5cf6.svg" alt="Paper 1.21.1 to 26.2">
-</p>
 
 ArcMenu is an Advanced Menu Plugin that lets you add custom html-like menus, animations and screens to your Minecraft server — no client mods required. Everything ships through the resource pack (or even without resourcepack with limited functions) and runs server-side.
 
