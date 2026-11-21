@@ -8,8 +8,7 @@
 
 <p align="center">
   <a href="README_zh_CN.md">简体中文</a> ·
-  <a href="https://github.com/FENTAIIII/ArcMenu-Editor">Visual Editor</a> ·
-  <a href="LICENSE">MIT License</a>
+  <a href="https://github.com/FENTAIIII/ArcMenu-Editor">Visual Editor</a> 
 </p>
 
 
