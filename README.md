@@ -11,7 +11,9 @@
   <a href="https://github.com/FENTAIIII/ArcMenu-Editor">Visual Editor</a> 
 </p>
 
-
+builtbybit: https://builtbybit.com/resources/arcmenu.135206/
+spigotmc:
+https://www.spigotmc.org/resources/arcmenu-26-1-1-21-2-paper.140415/
 ArcMenu is an Advanced Menu Plugin that lets you add custom html-like menus, animations and screens to your Minecraft server — no client mods required. Everything ships through the resource pack (or even without resourcepack with limited functions) and runs server-side.
 
 It uses new features that mojang had added to minecraft since 1.19.2, and it covers a larger variety of functions.
